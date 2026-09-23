@@ -1,0 +1,17 @@
+{
+  "zh": {
+    "game.title": "像素忍者村",
+    "hud.title": "像素忍者村 · 战斗原型 v0.1",
+    "jutsu.blink": "瞬身术",
+    "jutsu.fireball": "火遁·小火弹",
+    "hud.hp": "体力",
+    "hud.chakra": "查克拉",
+    "hud.kunai": "苦无",
+    "hud.kills": "击倒",
+    "hud.combo": "连击",
+    "hud.sealing": "结印中…",
+    "hud.aim_hint": "点击目标释放 · 再按 2 取消",
+    "hud.controls": "WASD 移动 · 左键 攻击 · 右键 苦无 · 1 瞬身 · 2 小火弹 · R 重来",
+    "hud.dead": "你被击倒了 · 按 R 重新开始"
+  }
+}

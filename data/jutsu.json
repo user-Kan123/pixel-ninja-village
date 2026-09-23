@@ -1,0 +1,28 @@
+{
+  "blink": {
+    "name_key": "jutsu.blink",
+    "rank": "C",
+    "category": "movement",
+    "cast_type": "instant",
+    "chakra_cost": 15,
+    "cooldown": 2.5,
+    "dash_range": 240,
+    "iframes": 0.25
+  },
+  "fireball": {
+    "name_key": "jutsu.fireball",
+    "rank": "C",
+    "category": "projectile",
+    "cast_type": "seal_aim",
+    "chakra_cost": 20,
+    "cooldown": 4.0,
+    "seal_time": 0.45,
+    "aim_timeout": 3.0,
+    "speed": 430,
+    "damage": 14,
+    "knockback": 220,
+    "burn_dps": 3.0,
+    "burn_duration": 2.0,
+    "aoe_radius": 40
+  }
+}
