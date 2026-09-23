@@ -1,0 +1,41 @@
+{
+  "hunt": {
+    "name_key": "mission.hunt.title",
+    "desc_key": "mission.hunt.desc",
+    "objective_key": "mission.objective_hunt",
+    "rank": "D",
+    "type": "hunt",
+    "target_kills": 10,
+    "mix": {"chaser": 0.5, "shooter": 0.28, "brute": 0.14, "elite": 0.08},
+    "alive_cap": 5,
+    "reward_ryo": 200,
+    "reward_xp": 60
+  },
+  "survive": {
+    "name_key": "mission.survive.title",
+    "desc_key": "mission.survive.desc",
+    "objective_key": "mission.objective_survive",
+    "rank": "D",
+    "type": "survive",
+    "waves": [
+      ["chaser", "chaser", "chaser", "shooter"],
+      ["chaser", "chaser", "shooter", "shooter", "brute"],
+      ["chaser", "chaser", "chaser", "shooter", "elite"]
+    ],
+    "reward_ryo": 300,
+    "reward_xp": 90
+  },
+  "collect": {
+    "name_key": "mission.collect.title",
+    "desc_key": "mission.collect.desc",
+    "objective_key": "mission.objective_collect",
+    "rank": "D",
+    "type": "collect",
+    "scroll_count": 6,
+    "enemy_interval": 11.0,
+    "mix": {"chaser": 0.5, "shooter": 0.35, "brute": 0.15},
+    "alive_cap": 4,
+    "reward_ryo": 250,
+    "reward_xp": 70
+  }
+}

@@ -132,5 +132,56 @@
     "cooldown": 13.0,
     "confuse_radius": 320,
     "confuse_duration": 4.5
+  },
+  "rasengan": {
+    "name_key": "jutsu.rasengan",
+    "rank": "A",
+    "category": "self_buff",
+    "cast_type": "body_trigger",
+    "chakra_cost": 28,
+    "cooldown": 8.0,
+    "orb_duration": 4.0,
+    "orb_radius": 16,
+    "damage": 30,
+    "knockback": 640,
+    "aoe_radius": 60,
+    "move_mult": 0.85
+  },
+  "sharingan_insight": {
+    "name_key": "jutsu.sharingan_insight",
+    "rank": "B",
+    "category": "self_buff",
+    "cast_type": "passive",
+    "chakra_cost": 0,
+    "cooldown": 0,
+    "dodge_chance": 0.25
+  },
+  "substitution": {
+    "name_key": "jutsu.substitution",
+    "rank": "C",
+    "category": "movement",
+    "cast_type": "passive",
+    "chakra_cost": 0,
+    "cooldown": 60.0,
+    "retreat_range": 220,
+    "iframes": 1.5
+  },
+  "chakra_flow": {
+    "name_key": "jutsu.chakra_flow",
+    "rank": "C",
+    "category": "self_buff",
+    "cast_type": "passive",
+    "chakra_cost": 0,
+    "cooldown": 0,
+    "chakra_regen_mult": 1.6
+  },
+  "monstrous_strength": {
+    "name_key": "jutsu.monstrous_strength",
+    "rank": "B",
+    "category": "self_buff",
+    "cast_type": "passive",
+    "chakra_cost": 0,
+    "cooldown": 0,
+    "melee_damage_mult": 1.3
   }
 }

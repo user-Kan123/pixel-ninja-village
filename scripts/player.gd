@@ -89,6 +89,11 @@ var channel_cfg: Dictionary = {}
 var channel_slot := -1
 var channel_t := 0.0
 
+## 附身触发（螺旋丸：手持丸子，接触敌人引爆）
+var orb_active := false
+var orb_timer := 0.0
+var orb_cfg: Dictionary = {}
+
 ## 自身强化（附身触发型：近战附带麻痹）
 var buff_id := ""
 var buff_timer := 0.0
@@ -180,6 +185,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_R and event.pressed:
 			game.restart()
 			return
+		if event.keycode == KEY_E and event.pressed:
+			game.on_interact()
+			return
 		if event.keycode >= KEY_1 and event.keycode <= KEY_5:
 			var idx := int(event.keycode) - int(KEY_1)
 			if event.pressed:
@@ -267,7 +275,8 @@ func _physics_process(delta: float) -> void:
 	for id in jutsu_cd:
 		jutsu_cd[id] = maxf(float(jutsu_cd[id]) - delta, 0.0)
 	if not dead:
-		chakra = minf(chakra + CHAKRA_REGEN * delta, max_chakra)
+		var regen := CHAKRA_REGEN * _passive_mult("chakra_flow", "chakra_regen_mult", 1.0)
+		chakra = minf(chakra + regen * delta, max_chakra)
 		if kunai_count < KUNAI_MAX:
 			kunai_recharge_t += delta
 			if kunai_recharge_t >= KUNAI_RECHARGE:
@@ -284,9 +293,10 @@ func _physics_process(delta: float) -> void:
 	knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, 1600.0 * delta)
 
 	var desired := Vector2.ZERO
+	var orb_mult := float(orb_cfg.get("move_mult", 0.85)) if orb_active else 1.0
 	match state:
 		State.MOVE:
-			desired = _move_input() * MOVE_SPEED
+			desired = _move_input() * MOVE_SPEED * orb_mult
 		State.ATTACK:
 			if attack_phase <= 1:
 				desired = attack_dir * float(attack_step.get("lunge", 0.0))
@@ -306,6 +316,7 @@ func _physics_process(delta: float) -> void:
 			pass
 	velocity = desired + knockback_velocity
 	move_and_slide()
+	_tick_orb(delta)
 
 	match state:
 		State.SEALING:
@@ -328,6 +339,9 @@ func _physics_process(delta: float) -> void:
 # ---------------------------------------------------------------- 近战 / 苦无
 
 func _request_attack() -> void:
+	if orb_active:
+		## 手持丸子期间双手被占用，不能出刀
+		return
 	if state == State.MOVE:
 		_start_attack(1)
 	elif state == State.ATTACK:
@@ -378,7 +392,7 @@ func _do_melee_hit() -> void:
 			continue
 		if to_e.length() > 26.0 and absf(attack_dir.angle_to(to_e)) > MELEE_ARC:
 			continue
-		var dmg: float = float(attack_step.damage) + (buff_damage if buffed else 0.0)
+		var dmg: float = (float(attack_step.damage) + (buff_damage if buffed else 0.0)) * _passive_mult("monstrous_strength", "melee_damage_mult", 1.0)
 		enemy.take_damage(dmg, attack_dir * float(attack_step.knockback))
 		if buffed and buff_paralysis > 0.0:
 			enemy.apply_root(buff_paralysis)
@@ -390,7 +404,7 @@ func _do_melee_hit() -> void:
 
 
 func _throw_kunai(target: Vector2) -> void:
-	if kunai_count <= 0:
+	if kunai_count <= 0 or orb_active:
 		return
 	kunai_count -= 1
 	var dir := (target - global_position).normalized()
@@ -437,6 +451,11 @@ func _try_cast_jutsu(id: String, slot_idx: int) -> void:
 			_start_ground(id, cfg, slot_idx)
 		"channel":
 			_start_channel(id, cfg, slot_idx)
+		"body_trigger":
+			_cast_body_trigger(id, cfg, cost)
+		"passive":
+			## 被动常驻：装配即生效，按键无操作
+			pass
 		_:
 			pass
 
@@ -497,6 +516,76 @@ func _cast_illusion(cfg: Dictionary) -> void:
 			Fx.burst(game.fx_container, enemy.global_position, Color(0.72, 0.45, 1.0, 0.75), 5, 110.0)
 	Fx.burst(game.fx_container, global_position, Color(0.72, 0.45, 1.0, 0.7), 10, 240.0)
 	game.hitstop(0.04)
+
+
+# ---------------------------------------------------------------- 附身触发（螺旋丸）
+
+func _cast_body_trigger(id: String, cfg: Dictionary, cost: float) -> void:
+	if orb_active:
+		return
+	chakra -= cost
+	jutsu_cd[id] = float(cfg.get("cooldown", 8.0))
+	orb_active = true
+	orb_timer = float(cfg.get("orb_duration", 4.0))
+	orb_cfg = cfg
+	Fx.burst(game.fx_container, global_position, Color(0.55, 0.75, 1.0, 0.9), 10, 180.0)
+
+
+func _tick_orb(delta: float) -> void:
+	if not orb_active:
+		return
+	orb_timer -= delta
+	if orb_timer <= 0.0:
+		orb_active = false
+		Fx.burst(game.fx_container, global_position, Color(0.6, 0.8, 1.0, 0.5), 6, 120.0)
+		return
+	## 手持丸子：接触敌人即引爆
+	var orb_pos := _orb_pos()
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not enemy is EnemyBase or enemy.dead:
+			continue
+		if orb_pos.distance_to(enemy.global_position) <= float(orb_cfg.get("orb_radius", 16.0)) + enemy.hit_radius + 12.0:
+			_detonate_orb(orb_pos)
+			return
+
+
+func _orb_pos() -> Vector2:
+	var dir := (mouse_world - global_position).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	return global_position + dir * 24.0
+
+
+func _detonate_orb(center: Vector2) -> void:
+	orb_active = false
+	var radius := float(orb_cfg.get("aoe_radius", 60.0))
+	var dmg := float(orb_cfg.get("damage", 30.0))
+	var kb := float(orb_cfg.get("knockback", 640.0))
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not enemy is EnemyBase or enemy.dead:
+			continue
+		var d: float = center.distance_to(enemy.global_position)
+		if d <= radius + enemy.hit_radius:
+			var dir: Vector2 = (enemy.global_position - center).normalized()
+			if dir == Vector2.ZERO:
+				dir = Vector2.RIGHT
+			var falloff := 1.0 - clampf(d / maxf(radius, 1.0), 0.0, 1.0) * 0.4
+			enemy.take_damage(dmg * falloff, dir * kb)
+	Fx.burst(game.fx_container, center, Color(0.55, 0.8, 1.0, 0.95), 16, 320.0)
+	Fx.burst(game.fx_container, center, Color(0.9, 0.97, 1.0, 0.9), 10, 200.0)
+	game.hitstop(0.09)
+
+
+# ---------------------------------------------------------------- 被动常驻
+
+func _equipped(id: String) -> bool:
+	return jutsu_slots.has(id)
+
+
+func _passive_mult(id: String, key: String, fallback: float) -> float:
+	if not _equipped(id):
+		return fallback
+	return float(Data.jutsu.get(id, {}).get(key, fallback))
 
 
 # ---------------------------------------------------------------- 结印 + 瞄准
@@ -745,18 +834,52 @@ func _end_channel() -> void:
 func take_damage(amount: float, knockback: Vector2) -> void:
 	if dead or invuln_timer > 0.0:
 		return
+	## 写轮眼·洞察（被动）：概率免伤闪避
+	if _equipped("sharingan_insight"):
+		var dodge := float(Data.jutsu.get("sharingan_insight", {}).get("dodge_chance", 0.0))
+		if randf() < dodge:
+			Fx.ghost(game.fx_container, global_position, Color(0.95, 0.4, 0.45, 0.6))
+			Fx.burst(game.fx_container, global_position, Color(0.95, 0.5, 0.55, 0.85), 6, 150.0)
+			game.hitstop(0.03)
+			return
 	hp -= amount
 	flash_timer = 0.15
 	knockback_velocity += knockback
 	game.hitstop(0.05)
-	## 被打断：引导立即终止，蓄力直接中断（不耗查克拉）
+	## 被打断：引导立即终止，蓄力直接中断（不耗查克拉），丸子脱手
 	if state == State.CHANNEL:
 		_end_channel()
 	elif state == State.CHARGE:
 		_cancel_charge()
+	if orb_active:
+		orb_active = false
 	if hp <= 0.0:
+		## 替身术（被动）：免死一次，后撤并短暂无敌，冷却 60s
+		if _equipped("substitution") and float(jutsu_cd.get("substitution", 0.0)) <= 0.0:
+			_substitute_survive()
+			return
 		hp = 0.0
 		_die()
+
+
+func _substitute_survive() -> void:
+	var cfg: Dictionary = Data.jutsu.get("substitution", {})
+	hp = 1.0
+	jutsu_cd["substitution"] = float(cfg.get("cooldown", 60.0))
+	invuln_timer = float(cfg.get("iframes", 1.5))
+	## 后撤：优先沿击退反方向，否则随机
+	var dir := -knockback_velocity.normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.from_angle(randf() * TAU)
+	var dist := float(cfg.get("retreat_range", 220.0))
+	var target := global_position + dir * dist
+	while dist > 16.0 and game.pos_blocked(target):
+		dist *= 0.6
+		target = global_position + dir * dist
+	Fx.ghost(game.fx_container, global_position, Color(0.65, 0.5, 0.3, 0.6))
+	global_position = game.clamp_to_arena(target, 24.0)
+	Fx.burst(game.fx_container, global_position, Color(0.85, 0.7, 0.45, 0.9), 12, 220.0)
+	game.hitstop(0.1)
 
 
 func _die() -> void:
@@ -838,3 +961,11 @@ func _draw() -> void:
 		draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 24, Color(0.4, 0.95, 0.6, 0.75), 2.5)
 		draw_rect(Rect2(-2, -22, 4, 12), Color(0.5, 1.0, 0.65, 0.9))
 		draw_rect(Rect2(-8, -16, 16, 4), Color(0.5, 1.0, 0.65, 0.9))
+	if orb_active:
+		var op := _orb_pos() - global_position
+		var or_ := float(orb_cfg.get("orb_radius", 16.0))
+		var pulse := 1.0 + 0.12 * sin(orb_timer * 22.0)
+		draw_circle(op, or_ * pulse, Color(0.55, 0.78, 1.0, 0.9))
+		draw_circle(op, or_ * 0.5, Color(0.92, 0.98, 1.0, 0.95))
+		draw_arc(op, or_ + 5.0, orb_timer * 6.0, orb_timer * 6.0 + TAU * 0.65, 14, Color(0.7, 0.9, 1.0, 0.7), 2.0)
+		draw_arc(op, or_ + 9.0, -orb_timer * 4.0, -orb_timer * 4.0 + TAU * 0.5, 16, Color(0.6, 0.85, 1.0, 0.4), 1.5)

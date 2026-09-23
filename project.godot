@@ -4,14 +4,15 @@ config_version=5
 [application]
 
 config/name="Pixel Ninja Village"
-config/description="火影题材像素沙盒 RPG —— 免费同人开源作品（战斗原型）"
-run/main_scene="res://scenes/main.tscn"
+config/description="火影题材像素沙盒 RPG —— 免费同人开源作品（垂直切片）"
+run/main_scene="res://scenes/village.tscn"
 config/features=PackedStringArray("4.4")
-config/version="0.1.0"
+config/version="0.3.0"
 
 [autoload]
 
 Data="*res://scripts/data.gd"
+Flow="*res://scripts/flow.gd"
 
 [display]
 

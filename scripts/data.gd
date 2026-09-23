@@ -5,10 +5,12 @@ extends Node
 const JUTSU_DISPLAY_ORDER := [
 	"blink", "fireball", "great_fireball", "thunder_dash", "shadow_clones",
 	"lightning_edge", "medical_palm", "earth_wall", "binding_seal", "fox_genjutsu",
+	"rasengan", "sharingan_insight", "substitution", "chakra_flow", "monstrous_strength",
 ]
 
 var strings: Dictionary = {}
 var jutsu: Dictionary = {}
+var missions: Dictionary = {}
 var jutsu_list: Array[String] = []
 var ui_font: FontFile
 
@@ -16,6 +18,7 @@ var ui_font: FontFile
 func _ready() -> void:
 	strings = _load_json("res://data/strings.json").get("zh", {})
 	jutsu = _load_json("res://data/jutsu.json")
+	missions = _load_json("res://data/mission.json")
 	_build_jutsu_list()
 	_load_font()
 
@@ -86,6 +89,35 @@ static func draw_jutsu_icon(c: CanvasItem, id: String, center: Vector2, r: float
 			c.draw_arc(center, r * 0.9, 0.0, TAU * 0.7, 16, Color(0.72, 0.45, 1.0), 2.0)
 			c.draw_arc(center, r * 0.55, PI, PI + TAU * 0.7, 14, Color(0.85, 0.6, 1.0), 2.0)
 			c.draw_circle(center, r * 0.18, Color(0.9, 0.75, 1.0))
+		"rasengan":
+			c.draw_circle(center, r * 0.8, Color(0.55, 0.75, 1.0, 0.9))
+			c.draw_arc(center, r * 0.55, 0.0, TAU * 0.75, 14, Color(0.85, 0.95, 1.0), 2.0)
+			c.draw_arc(center, r * 0.3, PI, PI + TAU * 0.7, 10, Color(0.4, 0.65, 1.0), 2.0)
+		"sharingan_insight":
+			c.draw_arc(center, r * 0.85, 0.0, TAU, 20, Color(0.9, 0.25, 0.3), 2.0)
+			c.draw_circle(center, r * 0.32, Color(0.85, 0.2, 0.25))
+			for i in 3:
+				var ang := TAU * float(i) / 3.0 + 0.5
+				c.draw_circle(center + Vector2.from_angle(ang) * r * 0.6, r * 0.14, Color(0.95, 0.5, 0.55))
+		"substitution":
+			c.draw_rect(Rect2(center.x - r * 0.25, center.y - r * 0.8, r * 0.5, r * 1.6), Color(0.65, 0.45, 0.25))
+			c.draw_arc(center + Vector2(r * 0.4, 0), r * 0.45, -PI / 2.0, PI / 2.0, 10, Color(0.9, 0.85, 0.7), 1.5)
+		"chakra_flow":
+			c.draw_arc(center, r * 0.75, 0.0, TAU, 18, Color(0.4, 0.7, 1.0), 2.0)
+			for i in 3:
+				var ang2 := TAU * float(i) / 3.0 - PI / 2.0
+				var p2 := center + Vector2.from_angle(ang2) * r * 0.75
+				c.draw_colored_polygon(PackedVector2Array([
+					p2 + Vector2.from_angle(ang2) * r * 0.35,
+					p2 + Vector2.from_angle(ang2 + 2.3) * r * 0.18,
+					p2 + Vector2.from_angle(ang2 - 2.3) * r * 0.18,
+				]), Color(0.6, 0.85, 1.0))
+		"monstrous_strength":
+			c.draw_colored_polygon(PackedVector2Array([
+				center + Vector2(-r * 0.7, r * 0.7), center + Vector2(-r * 0.7, -r * 0.3),
+				center + Vector2(-r * 0.1, -r * 0.8), center + Vector2(r * 0.5, -r * 0.5),
+				center + Vector2(r * 0.7, r * 0.1), center + Vector2(r * 0.3, r * 0.7),
+			]), Color(0.95, 0.5, 0.35))
 		_:
 			c.draw_rect(Rect2(center - Vector2(r * 0.6, r * 0.6), Vector2(r * 1.2, r * 1.2)), Color(0.75, 0.75, 0.78))
 

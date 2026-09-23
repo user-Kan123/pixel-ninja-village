@@ -66,7 +66,7 @@ func _tick(delta: float) -> void:
 		S.CHASE:
 			var to_p: Vector2 = player.global_position - global_position
 			if rooted_timer <= 0.0 and stagger_timer <= 0.0:
-				position += to_p.normalized() * CHASE_SPEED * delta
+				position += to_p.normalized() * move_speed * delta
 			if to_p.length() <= ATTACK_RANGE:
 				state = S.WINDUP
 				state_timer = ATTACK_WINDUP
