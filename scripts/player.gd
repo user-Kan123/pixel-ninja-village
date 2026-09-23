@@ -1,16 +1,30 @@
 class_name Player
 extends CharacterBody2D
-## 玩家：俯视移动、三段近战、投掷苦无、两个忍术（瞬身 / 小火弹）。
-## 忍术参数全部来自 data/jutsu.json，本文件不含专有名词。
+## 玩家：俯视移动、三段近战、投掷苦无、5 类施法管线驱动的忍术系统。
+##
+## 施法管线（cast_type，全部由 data/jutsu.json 指定）：
+##   instant       瞬时：位移 / 召唤 / 自身强化 / 幻术
+##   seal_aim      结印 + 瞄准：结印结束后进入瞄准，点击释放
+##   charge        蓄力：按住蓄力，松开按下蓄力量缩放参数释放
+##   ground_target 坐标选择：移动光标选点，点击放置场地区域
+##   channel       引导：按住持续生效，消耗查克拉、可被打断
+##
+## 成长：击杀获得经验，升级提升体力/查克拉上限，并在 6 级、12 级各解锁一个忍术槽。
+## 忍术槽内容由装配界面（Tab）决定，本文件不含任何专有名词。
 
-enum State { MOVE, ATTACK, SEALING, AIM, DEAD }
+enum State { MOVE, ATTACK, SEALING, AIM, CHARGE, GROUND, CHANNEL, DEAD }
 
-const MAX_HP := 100.0
-const MAX_CHAKRA := 100.0
+const MAX_HP_BASE := 100.0
+const MAX_CHAKRA_BASE := 100.0
 const MOVE_SPEED := 330.0
 const CHAKRA_REGEN := 9.0
 const KUNAI_MAX := 8
 const KUNAI_RECHARGE := 4.0
+
+const MAX_LEVEL := 20
+## 5 个忍术槽各自的解锁等级（前三个 1 级即可用）
+const SLOT_UNLOCK_LEVELS := [1, 1, 1, 6, 12]
+const DEFAULT_LOADOUT := ["blink", "fireball", "great_fireball", "thunder_dash", "shadow_clones"]
 
 const COMBO_STEPS := [
 	{"damage": 8.0, "knockback": 170.0, "windup": 0.08, "active": 0.1, "recovery": 0.14, "lunge": 250.0, "hitstop": 0.045},
@@ -23,10 +37,21 @@ const KUNAI_SPEED := 640.0
 const KUNAI_DAMAGE := 9.0
 
 var game
-var hp := MAX_HP
-var chakra := MAX_CHAKRA
+var max_hp := MAX_HP_BASE
+var max_chakra := MAX_CHAKRA_BASE
+var hp := MAX_HP_BASE
+var chakra := MAX_CHAKRA_BASE
 var kunai_count := KUNAI_MAX
 var kunai_recharge_t := 0.0
+
+## 成长
+var level := 1
+var xp := 0
+var xp_next := 40
+
+## 忍术装配
+var jutsu_slots: Array[String] = []
+var jutsu_cd: Dictionary = {}
 
 var state := State.MOVE
 var attack_stage := 0
@@ -39,11 +64,36 @@ var attack_buffered := false
 var combo_count := 0
 var combo_timer := 0.0
 
-var jutsu_cd := {"blink": 0.0, "fireball": 0.0}
+## 结印 / 瞄准
 var seal_id := ""
 var seal_cfg: Dictionary = {}
+var seal_slot := -1
 var seal_timer := 0.0
 var aim_timer := 0.0
+
+## 蓄力
+var charge_id := ""
+var charge_cfg: Dictionary = {}
+var charge_slot := -1
+var charge_t := 0.0
+
+## 坐标选择
+var ground_id := ""
+var ground_cfg: Dictionary = {}
+var ground_slot := -1
+var ground_timer := 0.0
+
+## 引导
+var channel_id := ""
+var channel_cfg: Dictionary = {}
+var channel_slot := -1
+var channel_t := 0.0
+
+## 自身强化（附身触发型：近战附带麻痹）
+var buff_id := ""
+var buff_timer := 0.0
+var buff_damage := 0.0
+var buff_paralysis := 0.0
 
 var invuln_timer := 0.0
 var flash_timer := 0.0
@@ -57,6 +107,10 @@ var mouse_world := Vector2.ZERO
 
 func _ready() -> void:
 	add_to_group("player")
+	for id in DEFAULT_LOADOUT:
+		jutsu_slots.append(String(id))
+	for id in Data.jutsu:
+		jutsu_cd[id] = 0.0
 	var col := CollisionShape2D.new()
 	var shape := RectangleShape2D.new()
 	shape.size = Vector2(24, 28)
@@ -72,27 +126,125 @@ func _ready() -> void:
 	add_child(cam)
 
 
+# ---------------------------------------------------------------- 成长
+
+func slots_unlocked() -> int:
+	var n := 0
+	for lv in SLOT_UNLOCK_LEVELS:
+		if level >= int(lv):
+			n += 1
+	return n
+
+
+func rank_key() -> String:
+	return "rank.genin" if level <= 10 else "rank.chunin"
+
+
+func gain_xp(amount: int) -> void:
+	if dead:
+		return
+	xp += amount
+	while xp >= xp_next and level < MAX_LEVEL:
+		xp -= xp_next
+		_level_up()
+
+
+func _level_up() -> void:
+	level += 1
+	max_hp += 12.0
+	max_chakra += 10.0
+	hp = minf(max_hp, hp + max_hp * 0.35)
+	chakra = max_chakra
+	xp_next = 40 + (level - 1) * 26
+	flash_timer = 0.25
+	Fx.burst(game.fx_container, global_position, Color(1.0, 0.95, 0.5, 0.95), 14, 220.0)
+	game.hitstop(0.06)
+	game.on_player_level_up(level)
+
+
+# ---------------------------------------------------------------- 输入
+
 func _unhandled_input(event: InputEvent) -> void:
+	if game != null and game.loadout_open:
+		return
 	if event is InputEventMouseButton and event.pressed:
 		mouse_world = get_global_mouse_position()
 		if event.button_index == MOUSE_BUTTON_LEFT:
-			if state == State.AIM:
-				_release_fireball(mouse_world)
-			elif not dead and state != State.SEALING:
-				_request_attack()
-		elif event.button_index == MOUSE_BUTTON_RIGHT and not dead:
-			if state == State.MOVE:
-				_throw_kunai(mouse_world)
-	elif event is InputEventKey and event.pressed and not event.echo:
-		if event.keycode == KEY_1:
-			_try_cast_jutsu("blink")
-		elif event.keycode == KEY_2:
-			if state == State.AIM:
-				_cancel_aim()
-			else:
-				_try_cast_jutsu("fireball")
-		elif event.keycode == KEY_R:
+			_on_left_click()
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			_on_right_click()
+	elif event is InputEventKey and not event.echo:
+		if event.keycode == KEY_TAB and event.pressed:
+			game.toggle_loadout()
+			return
+		if event.keycode == KEY_R and event.pressed:
 			game.restart()
+			return
+		if event.keycode >= KEY_1 and event.keycode <= KEY_5:
+			var idx := int(event.keycode) - int(KEY_1)
+			if event.pressed:
+				_on_slot_pressed(idx)
+			else:
+				_on_slot_released(idx)
+
+
+func _on_left_click() -> void:
+	if state == State.AIM:
+		_release_seal_aim(mouse_world)
+	elif state == State.GROUND:
+		_confirm_ground(mouse_world)
+	elif state == State.CHANNEL:
+		pass
+	elif not dead:
+		_request_attack()
+
+
+func _on_right_click() -> void:
+	match state:
+		State.AIM:
+			_cancel_aim()
+		State.GROUND:
+			_cancel_ground()
+		State.CHARGE:
+			_cancel_charge()
+		State.MOVE:
+			if not dead:
+				_throw_kunai(mouse_world)
+		_:
+			pass
+
+
+func _on_slot_pressed(idx: int) -> void:
+	if dead or idx < 0 or idx >= jutsu_slots.size():
+		return
+	if idx >= slots_unlocked():
+		return
+	if state == State.CHARGE:
+		## 蓄力中再次按同键：直接释放
+		if idx == charge_slot:
+			_release_charge()
+		return
+	if state == State.GROUND:
+		if idx == ground_slot:
+			_cancel_ground()
+			return
+		_cancel_ground()
+	if state == State.AIM:
+		if idx == seal_slot:
+			_cancel_aim()
+			return
+	if state != State.MOVE and state != State.CHANNEL:
+		return
+	if state == State.CHANNEL:
+		_end_channel()
+	_try_cast_jutsu(jutsu_slots[idx], idx)
+
+
+func _on_slot_released(idx: int) -> void:
+	if state == State.CHARGE and idx == charge_slot:
+		_release_charge()
+	elif state == State.CHANNEL and idx == channel_slot:
+		_end_channel()
 
 
 func _move_input() -> Vector2:
@@ -108,12 +260,14 @@ func _move_input() -> Vector2:
 	return v.limit_length(1.0)
 
 
+# ---------------------------------------------------------------- 主循环
+
 func _physics_process(delta: float) -> void:
 	mouse_world = get_global_mouse_position()
 	for id in jutsu_cd:
-		jutsu_cd[id] = maxf(jutsu_cd[id] - delta, 0.0)
+		jutsu_cd[id] = maxf(float(jutsu_cd[id]) - delta, 0.0)
 	if not dead:
-		chakra = minf(chakra + CHAKRA_REGEN * delta, MAX_CHAKRA)
+		chakra = minf(chakra + CHAKRA_REGEN * delta, max_chakra)
 		if kunai_count < KUNAI_MAX:
 			kunai_recharge_t += delta
 			if kunai_recharge_t >= KUNAI_RECHARGE:
@@ -123,6 +277,7 @@ func _physics_process(delta: float) -> void:
 		combo_timer -= delta
 		if combo_timer <= 0.0:
 			combo_count = 0
+	buff_timer = maxf(buff_timer - delta, 0.0)
 	invuln_timer = maxf(invuln_timer - delta, 0.0)
 	flash_timer = maxf(flash_timer - delta, 0.0)
 	slash_timer = maxf(slash_timer - delta, 0.0)
@@ -141,19 +296,36 @@ func _physics_process(delta: float) -> void:
 			desired = _move_input() * MOVE_SPEED * 0.35
 		State.AIM:
 			desired = _move_input() * MOVE_SPEED * 0.7
+		State.CHARGE:
+			desired = _move_input() * MOVE_SPEED * 0.3
+		State.GROUND:
+			desired = _move_input() * MOVE_SPEED * 0.5
+		State.CHANNEL:
+			desired = _move_input() * MOVE_SPEED * 0.2
 		State.DEAD:
 			pass
 	velocity = desired + knockback_velocity
 	move_and_slide()
 
-	if state == State.SEALING:
-		_tick_seal(delta)
-	elif state == State.AIM:
-		_tick_aim(delta)
-	elif state == State.ATTACK:
-		_tick_attack(delta)
+	match state:
+		State.SEALING:
+			_tick_seal(delta)
+		State.AIM:
+			_tick_aim(delta)
+		State.ATTACK:
+			_tick_attack(delta)
+		State.CHARGE:
+			_tick_charge(delta)
+		State.GROUND:
+			_tick_ground(delta)
+		State.CHANNEL:
+			_tick_channel(delta)
+		_:
+			pass
 	queue_redraw()
 
+
+# ---------------------------------------------------------------- 近战 / 苦无
 
 func _request_attack() -> void:
 	if state == State.MOVE:
@@ -196,6 +368,7 @@ func _tick_attack(delta: float) -> void:
 
 func _do_melee_hit() -> void:
 	var hit_any := false
+	var buffed := buff_timer > 0.0
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not enemy is EnemyBase or enemy.dead:
 			continue
@@ -205,7 +378,10 @@ func _do_melee_hit() -> void:
 			continue
 		if to_e.length() > 26.0 and absf(attack_dir.angle_to(to_e)) > MELEE_ARC:
 			continue
-		enemy.take_damage(float(attack_step.damage), attack_dir * float(attack_step.knockback))
+		var dmg: float = float(attack_step.damage) + (buff_damage if buffed else 0.0)
+		enemy.take_damage(dmg, attack_dir * float(attack_step.knockback))
+		if buffed and buff_paralysis > 0.0:
+			enemy.apply_root(buff_paralysis)
 		hit_any = true
 	if hit_any:
 		combo_count += 1
@@ -230,7 +406,9 @@ func _throw_kunai(target: Vector2) -> void:
 	})
 
 
-func _try_cast_jutsu(id: String) -> void:
+# ---------------------------------------------------------------- 施法入口
+
+func _try_cast_jutsu(id: String, slot_idx: int) -> void:
 	if dead:
 		return
 	if state != State.MOVE:
@@ -240,19 +418,46 @@ func _try_cast_jutsu(id: String) -> void:
 		return
 	if float(jutsu_cd.get(id, 0.0)) > 0.0:
 		return
+	var cast_type := String(cfg.get("cast_type", ""))
 	var cost := float(cfg.get("chakra_cost", 0.0))
-	if chakra < cost:
+	## 引导类按秒扣费，起手只需一点点启动查克拉
+	if cast_type == "channel":
+		if chakra < 6.0:
+			return
+	elif chakra < cost:
 		return
-	match String(cfg.get("cast_type", "")):
+	match cast_type:
 		"instant":
 			_cast_instant(id, cfg, cost)
 		"seal_aim":
-			_start_seal(id, cfg, cost)
+			_start_seal(id, cfg, cost, slot_idx)
+		"charge":
+			_start_charge(id, cfg, slot_idx)
+		"ground_target":
+			_start_ground(id, cfg, slot_idx)
+		"channel":
+			_start_channel(id, cfg, slot_idx)
+		_:
+			pass
 
 
 func _cast_instant(id: String, cfg: Dictionary, cost: float) -> void:
 	chakra -= cost
 	jutsu_cd[id] = float(cfg.get("cooldown", 1.0))
+	match String(cfg.get("category", "")):
+		"movement":
+			_instant_dash(cfg)
+		"summon":
+			_cast_clones(cfg)
+		"self_buff":
+			_cast_self_buff(id, cfg)
+		"illusion":
+			_cast_illusion(cfg)
+		_:
+			pass
+
+
+func _instant_dash(cfg: Dictionary) -> void:
 	var dir := (mouse_world - global_position).normalized()
 	if dir == Vector2.ZERO:
 		dir = Vector2.RIGHT
@@ -267,12 +472,42 @@ func _cast_instant(id: String, cfg: Dictionary, cost: float) -> void:
 	Fx.burst(game.fx_container, global_position, Color(0.55, 0.8, 1.0, 0.8), 6, 140.0)
 
 
-func _start_seal(id: String, cfg: Dictionary, cost: float) -> void:
+func _cast_clones(cfg: Dictionary) -> void:
+	var count := int(cfg.get("clone_count", 2))
+	for i in count:
+		ShadowClone.create(game.field_container, global_position, cfg, game, self, i)
+
+
+func _cast_self_buff(id: String, cfg: Dictionary) -> void:
+	buff_id = id
+	buff_timer = float(cfg.get("buff_duration", 8.0))
+	buff_damage = float(cfg.get("buff_damage", 0.0))
+	buff_paralysis = float(cfg.get("paralysis", 0.0))
+	Fx.burst(game.fx_container, global_position, Color(0.75, 0.9, 1.0, 0.9), 12, 200.0)
+
+
+func _cast_illusion(cfg: Dictionary) -> void:
+	var radius := float(cfg.get("confuse_radius", 300.0))
+	var duration := float(cfg.get("confuse_duration", 4.0))
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not enemy is EnemyBase or enemy.dead:
+			continue
+		if global_position.distance_to(enemy.global_position) <= radius + enemy.hit_radius:
+			enemy.apply_confuse(duration)
+			Fx.burst(game.fx_container, enemy.global_position, Color(0.72, 0.45, 1.0, 0.75), 5, 110.0)
+	Fx.burst(game.fx_container, global_position, Color(0.72, 0.45, 1.0, 0.7), 10, 240.0)
+	game.hitstop(0.04)
+
+
+# ---------------------------------------------------------------- 结印 + 瞄准
+
+func _start_seal(id: String, cfg: Dictionary, cost: float, slot_idx: int) -> void:
 	chakra -= cost
 	jutsu_cd[id] = float(cfg.get("cooldown", 3.0))
 	seal_id = id
-	seal_cfg = cfg
+	seal_cfg = cfg.duplicate()
 	seal_cfg["cost_paid"] = cost
+	seal_slot = slot_idx
 	attack_stage = 0
 	seal_timer = float(cfg.get("seal_time", 0.45))
 	state = State.SEALING
@@ -292,35 +527,220 @@ func _tick_aim(delta: float) -> void:
 
 
 func _cancel_aim() -> void:
-	chakra = minf(MAX_CHAKRA, chakra + float(seal_cfg.get("cost_paid", 0.0)))
+	chakra = minf(max_chakra, chakra + float(seal_cfg.get("cost_paid", 0.0)))
 	jutsu_cd[seal_id] = minf(float(jutsu_cd.get(seal_id, 0.0)), 0.8)
 	seal_cfg = {}
 	seal_id = ""
+	seal_slot = -1
 	state = State.MOVE
 
 
-func _release_fireball(target: Vector2) -> void:
+func _release_seal_aim(target: Vector2) -> void:
 	var cfg := seal_cfg
-	var dir := (target - global_position).normalized()
-	if dir == Vector2.ZERO:
-		dir = Vector2.RIGHT
-	Projectile.create(game.projectile_container, global_position + dir * 22.0, dir, {
-		"kind": "fireball",
-		"speed": float(cfg.get("speed", 400.0)),
-		"damage": float(cfg.get("damage", 12.0)),
-		"knockback": float(cfg.get("knockback", 220.0)),
-		"lifetime": 2.2,
-		"hit_radius": 9.0,
-		"aoe_radius": float(cfg.get("aoe_radius", 36.0)),
-		"burn_dps": float(cfg.get("burn_dps", 3.0)),
-		"burn_duration": float(cfg.get("burn_duration", 2.0)),
-		"color": Color(1.0, 0.55, 0.2, 0.95),
-		"game": game,
-	})
+	if String(cfg.get("category", "")) == "projectile":
+		_spawn_fireball(cfg, 1.0, 1.0, target)
 	seal_cfg = {}
 	seal_id = ""
+	seal_slot = -1
 	state = State.MOVE
 
+
+func _spawn_fireball(cfg: Dictionary, scale: float, charge_ratio: float, aim: Vector2) -> void:
+	var dir := (aim - global_position).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	var hit_r: float = float(cfg.get("hit_radius", 9.0))
+	if cfg.has("hit_radius_max"):
+		hit_r = lerpf(hit_r, float(cfg.get("hit_radius_max")), charge_ratio)
+	Projectile.create(game.projectile_container, global_position + dir * 24.0, dir, {
+		"kind": "fireball",
+		"speed": float(cfg.get("speed", 400.0)),
+		"damage": lerpf(float(cfg.get("damage", 12.0)), float(cfg.get("damage_max", cfg.get("damage", 12.0))), charge_ratio) * scale,
+		"knockback": float(cfg.get("knockback", 220.0)),
+		"lifetime": 2.3,
+		"hit_radius": hit_r,
+		"aoe_radius": lerpf(float(cfg.get("aoe_radius", 36.0)), float(cfg.get("aoe_radius_max", cfg.get("aoe_radius", 36.0))), charge_ratio),
+		"burn_dps": lerpf(float(cfg.get("burn_dps", 0.0)), float(cfg.get("burn_dps_max", cfg.get("burn_dps", 0.0))), charge_ratio),
+		"burn_duration": float(cfg.get("burn_duration", 2.0)),
+		"color": Color(1.0, 0.45 + 0.2 * (1.0 - charge_ratio), 0.18, 0.95),
+		"game": game,
+	})
+
+
+# ---------------------------------------------------------------- 蓄力
+
+func _start_charge(id: String, cfg: Dictionary, slot_idx: int) -> void:
+	charge_id = id
+	charge_cfg = cfg
+	charge_slot = slot_idx
+	charge_t = 0.0
+	state = State.CHARGE
+
+
+func _tick_charge(delta: float) -> void:
+	charge_t = minf(charge_t + delta, float(charge_cfg.get("max_charge", 1.0)))
+
+
+func _charge_ratio() -> float:
+	return clampf(charge_t / maxf(float(charge_cfg.get("max_charge", 1.0)), 0.01), 0.0, 1.0)
+
+
+func _release_charge() -> void:
+	var cfg := charge_cfg
+	var ratio := _charge_ratio()
+	var min_charge := 0.25
+	if cfg.has("min_charge"):
+		## min_charge 以秒为单位，换算成比例
+		min_charge = clampf(float(cfg.get("min_charge", 0.25)) / maxf(float(cfg.get("max_charge", 1.0)), 0.01), 0.0, 1.0)
+	if ratio < min_charge:
+		_cancel_charge()
+		return
+	var cost := float(cfg.get("chakra_cost", 0.0))
+	chakra -= cost
+	jutsu_cd[charge_id] = float(cfg.get("cooldown", 5.0))
+	var cat := String(cfg.get("category", ""))
+	if cat == "movement":
+		_charged_dash(cfg, ratio)
+	elif cat == "projectile":
+		_spawn_fireball(cfg, 1.0, ratio, mouse_world)
+	_reset_charge()
+	state = State.MOVE
+
+
+func _reset_charge() -> void:
+	charge_cfg = {}
+	charge_id = ""
+	charge_slot = -1
+	charge_t = 0.0
+
+
+func _cancel_charge() -> void:
+	_reset_charge()
+	state = State.MOVE
+
+
+func _charged_dash(cfg: Dictionary, ratio: float) -> void:
+	var dir := (mouse_world - global_position).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	var dist: float = lerpf(float(cfg.get("dash_range", 200.0)), float(cfg.get("dash_range_max", 400.0)), ratio)
+	dist = minf(dist, global_position.distance_to(mouse_world) + 60.0)
+	var dmg: float = lerpf(float(cfg.get("damage", 10.0)), float(cfg.get("damage_max", 20.0)), ratio)
+	var start := global_position
+	var travelled := 0.0
+	var step := 16.0
+	var hit_set := {}
+	while travelled < dist:
+		var advance: float = minf(step, dist - travelled)
+		travelled += advance
+		var p: Vector2 = start + dir * travelled
+		if game.pos_blocked(p):
+			break
+		for enemy in get_tree().get_nodes_in_group("enemies"):
+			if hit_set.has(enemy) or not enemy is EnemyBase or enemy.dead:
+				continue
+			if p.distance_to(enemy.global_position) <= 40.0 + enemy.hit_radius:
+				hit_set[enemy] = true
+				enemy.take_damage(dmg, dir * 340.0)
+				Fx.burst(game.fx_container, enemy.global_position, Color(0.7, 0.9, 1.0, 0.9), 6, 160.0)
+	for i in 6:
+		var f: float = float(i + 1) / 7.0
+		Fx.ghost(game.fx_container, start + dir * travelled * f, Color(0.45, 0.8, 1.0, 0.5))
+	global_position = game.clamp_to_arena(start + dir * travelled, 24.0)
+	invuln_timer = lerpf(float(cfg.get("iframes", 0.3)), float(cfg.get("iframes_max", 0.45)), ratio)
+	Fx.burst(game.fx_container, global_position, Color(0.6, 0.9, 1.0, 0.85), 8, 180.0)
+	if hit_set.size() > 0:
+		game.hitstop(0.07)
+
+
+# ---------------------------------------------------------------- 坐标选择
+
+func _start_ground(id: String, cfg: Dictionary, slot_idx: int) -> void:
+	ground_id = id
+	ground_cfg = cfg
+	ground_slot = slot_idx
+	ground_timer = 3.0
+	state = State.GROUND
+
+
+func _tick_ground(delta: float) -> void:
+	ground_timer -= delta
+	if ground_timer <= 0.0:
+		_cancel_ground()
+
+
+func _ground_point() -> Vector2:
+	var to_m := mouse_world - global_position
+	var max_range := float(ground_cfg.get("target_range", 400.0))
+	if to_m.length() > max_range:
+		to_m = to_m.normalized() * max_range
+	return game.clamp_to_arena(global_position + to_m, 30.0)
+
+
+func _confirm_ground(_target: Vector2) -> void:
+	var cfg := ground_cfg
+	var cost := float(cfg.get("chakra_cost", 0.0))
+	if chakra < cost:
+		_cancel_ground()
+		return
+	chakra -= cost
+	jutsu_cd[ground_id] = float(cfg.get("cooldown", 8.0))
+	var point := _ground_point()
+	var cat := String(cfg.get("category", ""))
+	if cat == "field":
+		var dir := (point - global_position).normalized()
+		if dir == Vector2.ZERO:
+			dir = Vector2.RIGHT
+		EarthWall.create(game.field_container, point, dir, cfg, game)
+	elif cat == "seal":
+		BindingField.create(game.field_container, point, cfg, game)
+	Fx.burst(game.fx_container, point, Color(0.7, 0.6, 0.35, 0.9), 8, 160.0)
+	ground_cfg = {}
+	ground_id = ""
+	ground_slot = -1
+	state = State.MOVE
+
+
+func _cancel_ground() -> void:
+	ground_cfg = {}
+	ground_id = ""
+	ground_slot = -1
+	state = State.MOVE
+
+
+# ---------------------------------------------------------------- 引导
+
+func _start_channel(id: String, cfg: Dictionary, slot_idx: int) -> void:
+	channel_id = id
+	channel_cfg = cfg
+	channel_slot = slot_idx
+	channel_t = 0.0
+	state = State.CHANNEL
+
+
+func _tick_channel(delta: float) -> void:
+	channel_t += delta
+	hp = minf(hp + float(channel_cfg.get("heal_per_second", 0.0)) * delta, max_hp)
+	chakra = maxf(chakra - float(channel_cfg.get("chakra_per_second", 0.0)) * delta, 0.0)
+	if fmod(channel_t, 0.12) < delta:
+		Fx.burst(game.fx_container, global_position + Vector2(randf_range(-10.0, 10.0), randf_range(-14.0, 6.0)), Color(0.45, 0.95, 0.6, 0.8), 2, 70.0)
+	if chakra <= 0.0 or channel_t >= float(channel_cfg.get("max_channel", 4.0)) or hp >= max_hp:
+		_end_channel()
+
+
+func _end_channel() -> void:
+	if state != State.CHANNEL:
+		return
+	if not channel_id.is_empty():
+		jutsu_cd[channel_id] = float(channel_cfg.get("cooldown", 3.0))
+	channel_cfg = {}
+	channel_id = ""
+	channel_slot = -1
+	channel_t = 0.0
+	state = State.MOVE
+
+
+# ---------------------------------------------------------------- 受击 / 死亡
 
 func take_damage(amount: float, knockback: Vector2) -> void:
 	if dead or invuln_timer > 0.0:
@@ -329,6 +749,11 @@ func take_damage(amount: float, knockback: Vector2) -> void:
 	flash_timer = 0.15
 	knockback_velocity += knockback
 	game.hitstop(0.05)
+	## 被打断：引导立即终止，蓄力直接中断（不耗查克拉）
+	if state == State.CHANNEL:
+		_end_channel()
+	elif state == State.CHARGE:
+		_cancel_charge()
 	if hp <= 0.0:
 		hp = 0.0
 		_die()
@@ -342,6 +767,8 @@ func _die() -> void:
 	game.on_player_died()
 
 
+# ---------------------------------------------------------------- 绘制
+
 func _draw() -> void:
 	if dead:
 		draw_rect(Rect2(-12, -16, 24, 32), Color(0.35, 0.35, 0.35, 0.6))
@@ -349,6 +776,8 @@ func _draw() -> void:
 	var body_col := Color("4d86d8")
 	if flash_timer > 0.0:
 		body_col = Color.WHITE
+	if buff_timer > 0.0:
+		body_col = body_col.lerp(Color(0.7, 0.92, 1.0), 0.35)
 	if invuln_timer > 0.0:
 		body_col.a = 0.45
 	draw_rect(Rect2(-12, -16, 24, 32), body_col)
@@ -361,9 +790,14 @@ func _draw() -> void:
 	draw_colored_polygon(PackedVector2Array([
 		aim * 22.0 + perp * 5.0, aim * 30.0, aim * 22.0 - perp * 5.0,
 	]), Color(0.95, 0.9, 0.8, body_col.a))
+	if buff_timer > 0.0:
+		var pulse := 0.5 + 0.5 * sin(buff_timer * 14.0)
+		draw_arc(Vector2.ZERO, 26.0 + pulse * 3.0, 0.0, TAU, 22, Color(0.6, 0.9, 1.0, 0.55 + 0.35 * pulse), 2.0)
 	if slash_timer > 0.0:
 		var t: float = clampf(slash_timer / 0.25, 0.0, 1.0)
 		var col := Color(1.0, 1.0, 0.95, t * 0.85)
+		if buff_timer > 0.0:
+			col = Color(0.7, 0.95, 1.0, t * 0.9)
 		var a0 := slash_dir.angle()
 		draw_arc(Vector2.ZERO, MELEE_RANGE * 0.85, a0 - MELEE_ARC, a0 + MELEE_ARC, 14, col, 5.0 if slash_heavy else 3.0)
 		if slash_heavy:
@@ -375,3 +809,32 @@ func _draw() -> void:
 		var local_mouse := mouse_world - global_position
 		draw_line(Vector2.ZERO, local_mouse, Color(1.0, 0.6, 0.25, 0.5), 1.0)
 		draw_arc(local_mouse, 14.0, 0.0, TAU, 20, Color(1.0, 0.6, 0.25, 0.9), 2.0)
+	if state == State.CHARGE:
+		var ratio := _charge_ratio()
+		var col2 := Color(0.5, 0.85, 1.0, 0.95)
+		if String(charge_cfg.get("category", "")) == "projectile":
+			col2 = Color(1.0, 0.6, 0.2, 0.95)
+		draw_arc(Vector2.ZERO, 38.0, -PI / 2.0, -PI / 2.0 + TAU * ratio, 26, col2, 4.0)
+		draw_arc(Vector2.ZERO, 30.0 + ratio * 10.0, 0.0, TAU * ratio, 22, Color(col2.r, col2.g, col2.b, 0.4), 1.5)
+		## 蓄力方向指示
+		var d := (mouse_world - global_position).normalized()
+		if d != Vector2.ZERO:
+			draw_line(Vector2.ZERO, d * (60.0 + 90.0 * ratio), Color(col2.r, col2.g, col2.b, 0.45), 2.0)
+	if state == State.GROUND:
+		var point_local := _ground_point() - global_position
+		var cat := String(ground_cfg.get("category", ""))
+		if cat == "seal":
+			var r := float(ground_cfg.get("seal_radius", 85.0))
+			draw_circle(point_local, r, Color(0.6, 0.4, 0.9, 0.15))
+			draw_arc(point_local, r, 0.0, TAU, 36, Color(0.75, 0.55, 1.0, 0.8), 2.0)
+		else:
+			var d2 := point_local.normalized()
+			var perp2 := Vector2(-d2.y, d2.x)
+			var half := float(ground_cfg.get("wall_length", 150.0)) / 2.0
+			draw_line(point_local - perp2 * half, point_local + perp2 * half, Color(0.85, 0.75, 0.5, 0.9), 4.0)
+			draw_line(point_local - perp2 * half, point_local + perp2 * half, Color(0.5, 0.42, 0.3, 0.5), 9.0)
+		draw_arc(point_local, 10.0, 0.0, TAU, 16, Color(1.0, 0.95, 0.7, 0.9), 2.0)
+	if state == State.CHANNEL:
+		draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 24, Color(0.4, 0.95, 0.6, 0.75), 2.5)
+		draw_rect(Rect2(-2, -22, 4, 12), Color(0.5, 1.0, 0.65, 0.9))
+		draw_rect(Rect2(-8, -16, 16, 4), Color(0.5, 1.0, 0.65, 0.9))

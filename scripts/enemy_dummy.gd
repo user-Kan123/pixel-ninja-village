@@ -8,3 +8,4 @@ func _init() -> void:
 	hit_radius = 20.0
 	body_color = Color("8a6a4a")
 	body_size = Vector2(36, 36)
+	xp_value = 6

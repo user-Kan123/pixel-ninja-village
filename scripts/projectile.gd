@@ -1,7 +1,8 @@
 class_name Projectile
 extends Node2D
-## 通用投射物（苦无 / 小火弹）。手动距离检测，不依赖物理碰撞。
-## 参数在 create() 时传入，新增投掷物种类无需改本文件。
+## 通用投射物（苦无 / 小火弹 / 豪火球 / 敌人苦无）。
+## 手动距离检测，不依赖物理碰撞。
+## hostile=false → 只伤害 enemies 组；hostile=true → 只伤害玩家。
 
 var velocity := Vector2.ZERO
 var lifetime := 1.5
@@ -14,6 +15,7 @@ var burn_dps := 0.0
 var burn_duration := 0.0
 var color := Color.WHITE
 var kind := "kunai"
+var hostile := false
 var game
 
 
@@ -30,6 +32,7 @@ static func create(parent: Node, pos: Vector2, dir: Vector2, cfg: Dictionary) ->
 	p.burn_duration = float(cfg.get("burn_duration", 0.0))
 	p.color = cfg.get("color", Color.WHITE)
 	p.kind = String(cfg.get("kind", "kunai"))
+	p.hostile = bool(cfg.get("hostile", false))
 	p.game = cfg.get("game", null)
 	parent.add_child(p)
 
@@ -46,6 +49,13 @@ func _physics_process(delta: float) -> void:
 		else:
 			_puff()
 		return
+	if hostile:
+		_check_player_hit()
+	else:
+		_check_enemy_hit()
+
+
+func _check_enemy_hit() -> void:
 	var hit_enemy = null
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not enemy is EnemyBase or enemy.dead:
@@ -59,6 +69,18 @@ func _physics_process(delta: float) -> void:
 		else:
 			hit_enemy.take_damage(damage, velocity.normalized() * knockback)
 			_puff()
+
+
+func _check_player_hit() -> void:
+	var arr := get_tree().get_nodes_in_group("player")
+	if arr.is_empty():
+		return
+	var p = arr[0]
+	if p.dead:
+		return
+	if global_position.distance_to(p.global_position) <= hit_radius + 16.0:
+		p.take_damage(damage, velocity.normalized() * knockback)
+		_puff()
 
 
 func _out_of_arena() -> bool:

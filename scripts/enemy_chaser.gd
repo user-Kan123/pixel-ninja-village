@@ -2,6 +2,7 @@ class_name EnemyChaser
 extends EnemyBase
 ## 追击型敌人：巡逻 → 追击 → 预警(感叹号) → 挥击 → 硬直。
 ## 攻击前有 0.45 秒黄色预警，可被玩家打断（受击进入硬直）。
+## 被幻术命中时随机游走不会攻击；被定身时无法移动但挥击照常。
 
 enum S { PATROL, CHASE, WINDUP, RECOVER }
 
@@ -28,6 +29,7 @@ func _init() -> void:
 	move_speed = CHASE_SPEED
 	body_color = Color("b0483c")
 	body_size = Vector2(30, 30)
+	xp_value = 14
 
 
 func take_damage(amount: float, knockback: Vector2) -> void:
@@ -41,6 +43,9 @@ func _tick(delta: float) -> void:
 	if player == null:
 		return
 	telegraph = 0.0
+	if confused_timer > 0.0:
+		_wander(delta)
+		return
 	match state:
 		S.PATROL:
 			state_timer += delta
@@ -48,16 +53,18 @@ func _tick(delta: float) -> void:
 				state_timer = 0.0
 				patrol_next = randf_range(1.2, 2.8)
 				patrol_dir = Vector2.from_angle(randf() * TAU)
-			position += patrol_dir * PATROL_SPEED * delta
+			if rooted_timer <= 0.0:
+				position += patrol_dir * PATROL_SPEED * delta
 			if stagger_timer <= 0.0 and global_position.distance_to(player.global_position) < AGGRO_RANGE:
 				state = S.CHASE
 		S.CHASE:
 			if stagger_timer > 0.0:
 				return
 			var to_p: Vector2 = player.global_position - global_position
-			var desired := to_p.normalized() * CHASE_SPEED
-			desired += _separation()
-			position += desired * delta
+			if rooted_timer <= 0.0:
+				var desired := to_p.normalized() * CHASE_SPEED
+				desired += _separation()
+				position += desired * delta
 			if to_p.length() <= ATTACK_RANGE:
 				state = S.WINDUP
 				state_timer = ATTACK_WINDUP
@@ -76,6 +83,17 @@ func _tick(delta: float) -> void:
 			state_timer -= delta
 			if state_timer <= 0.0:
 				state = S.CHASE
+
+
+func _wander(delta: float) -> void:
+	state = S.PATROL
+	state_timer += delta
+	if state_timer >= patrol_next:
+		state_timer = 0.0
+		patrol_next = randf_range(0.5, 1.2)
+		patrol_dir = Vector2.from_angle(randf() * TAU)
+	if rooted_timer <= 0.0:
+		position += patrol_dir * PATROL_SPEED * 1.4 * delta
 
 
 func _strike(player) -> void:
