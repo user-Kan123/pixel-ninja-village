@@ -14,7 +14,7 @@ var shoot_timer := 1.2
 func _init() -> void:
 	max_hp = 380.0
 	hit_radius = 30.0
-	move_speed = 142.0
+	move_speed = 85.0
 	body_color = Color("8f2f4f")
 	body_size = Vector2(52, 52)
 	xp_value = 60

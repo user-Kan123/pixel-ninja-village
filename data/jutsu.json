@@ -71,7 +71,7 @@
     "cooldown": 14.0,
     "clone_count": 2,
     "clone_lifetime": 12.0,
-    "clone_speed": 250,
+    "clone_speed": 150,
     "clone_damage": 7,
     "clone_attack_range": 48,
     "clone_windup": 0.25,

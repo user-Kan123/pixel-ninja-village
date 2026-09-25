@@ -11,7 +11,10 @@ const PANEL_H := 480.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	## 必须用 set_anchors_and_offsets_preset：父节点是 CanvasLayer 而非 Control，
+	## 只调 set_anchors_preset 不会把控件撑开，size 停在 (0,0)，
+	## 界面能画出来但鼠标命中测试永远失败（= 点击没反应）。
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 func on_opened() -> void:
@@ -62,7 +65,8 @@ func _draw() -> void:
 	draw_rect(p, Color("2b2620"))
 	draw_rect(p, Color(0.85, 0.72, 0.4), false, 2.0)
 	draw_string(font, p.position + Vector2(30.0, 48.0), Data.s("board.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
-	draw_string(font, Vector2(p.end.x - 30.0, 48.0), "%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("hud.day") % Flow.day], HORIZONTAL_ALIGNMENT_RIGHT, -1, 14, Color("e0c447"))
+	## 右对齐：x 给面板左边、width 给到右边界减 30；y 必须相对面板，否则会画到面板外面
+	draw_string(font, Vector2(p.position.x, p.position.y + 48.0), "%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("hud.day") % Flow.day], HORIZONTAL_ALIGNMENT_RIGHT, p.size.x - 30.0, 14, Color("e0c447"))
 	var ids := _mission_ids()
 	for i in ids.size():
 		var id: String = ids[i]

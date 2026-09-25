@@ -67,6 +67,7 @@ func _ready() -> void:
 	await _test_mission_survive()
 	await _test_wild_and_pending()
 	await _test_death()
+	await _test_ui_clicks()
 	_finish()
 
 
@@ -513,6 +514,68 @@ func _test_death() -> void:
 	player.take_damage(999999.0, Vector2.ZERO)
 	_check(player.dead, "致死伤害未触发死亡")
 	_check(player.state == Player.State.DEAD, "死亡后状态不是 DEAD")
+
+
+## 界面可点性 + 一屏内布局。
+## 回归点：挂在 CanvasLayer 上的 Control 只调 set_anchors_preset 不会撑开尺寸，
+## size 停在 (0,0) —— 界面画得出来但鼠标命中测试永远失败，点击完全没反应。
+## 所以这里走真实的 push_input 派发，而不是直接调 _gui_input（后者测不出这个病）。
+func _test_ui_clicks() -> void:
+	Flow.level = 12
+	Flow.loadout.clear()
+	for id in Flow.DEFAULT_LOADOUT:
+		Flow.loadout.append(String(id))
+	game.queue_free()
+	await _frames(2)
+	var scene: PackedScene = load("res://scenes/village.tscn")
+	game = scene.instantiate()
+	add_child(game)
+	await _frames(3)
+	player = game.player
+	_bind_player()
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+
+	## 任务看板：控件必须铺满视口
+	var board = game.board_ui
+	_check(board.size == vp, "任务看板尺寸未铺满视口：%s（点击会失效）" % str(board.size))
+	Flow.pending_mission = ""
+	game.toggle_board()
+	await _frames(2)
+	_check(game.board_open(), "任务看板未打开")
+	_push_click(board._row_rect(0).get_center())
+	await _frames(3)
+	_check(Flow.pending_mission != "", "点击「接收」未登记待出发任务")
+	_check(not game.board_open(), "接取任务后看板未关闭")
+
+	## 忍术装配：控件同样要铺满，且 15 个忍术必须全部落在一屏内
+	var lu = game.loadout_ui
+	_check(lu.size == vp, "忍术装配控件尺寸未铺满视口：%s" % str(lu.size))
+	game.toggle_loadout()
+	await _frames(2)
+	_check(lu.visible, "忍术装配界面未打开")
+	var total: int = Data.jutsu_list.size()
+	var last_y: float = lu._grid_rect(total - 1).end.y
+	_check(last_y < vp.y, "忍术网格最后一行超出屏幕：%.0f > %.0f" % [last_y, vp.y])
+	lu.selected_slot = 2
+	var before: String = player.jutsu_slots[2]
+	_push_click(lu._grid_rect(5).get_center())
+	await _frames(3)
+	_check(player.jutsu_slots[2] != before, "点击忍术卡片未装入槽位")
+	## 点左侧槽位可切换选中槽
+	_push_click(lu._slot_rect(1).get_center())
+	await _frames(2)
+	_check(lu.selected_slot == 1, "点击槽位未切换选中：%d" % lu.selected_slot)
+	game.close_loadout()
+	Flow.pending_mission = ""
+
+
+func _push_click(pos: Vector2) -> void:
+	var e := InputEventMouseButton.new()
+	e.button_index = MOUSE_BUTTON_LEFT
+	e.pressed = true
+	e.position = pos
+	e.global_position = pos
+	get_viewport().push_input(e, true)
 
 
 # ---------------------------------------------------------------- 工具

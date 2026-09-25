@@ -11,7 +11,7 @@ var player: Node2D
 var offset := Vector2(40.0, 0.0)
 var lifetime := 12.0
 var age := 0.0
-var move_speed := 250.0
+var move_speed := 150.0
 var damage := 7.0
 var attack_range := 48.0
 var windup_time := 0.25
@@ -28,7 +28,7 @@ static func create(parent: Node, pos: Vector2, cfg: Dictionary, game_node, owner
 	c.game = game_node
 	c.player = owner_player
 	c.lifetime = float(cfg.get("clone_lifetime", 12.0))
-	c.move_speed = float(cfg.get("clone_speed", 250.0))
+	c.move_speed = float(cfg.get("clone_speed", 150.0))
 	c.damage = float(cfg.get("clone_damage", 7.0))
 	c.attack_range = float(cfg.get("clone_attack_range", 48.0))
 	c.windup_time = float(cfg.get("clone_windup", 0.25))

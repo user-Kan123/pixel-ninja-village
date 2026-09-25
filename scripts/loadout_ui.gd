@@ -7,13 +7,23 @@ var game
 var player: Player
 var selected_slot := 0
 
-const PANEL_W := 1000.0
-const PANEL_H := 580.0
+const PANEL_W := 1010.0
+const PANEL_H := 664.0
+const HEADER_H := 84.0
+## 左列槽位
+const SLOT_H := 74.0
+const SLOT_GAP := 104.0
+## 右列忍术网格：2 列 × 8 行，行高压到 66 才能让 15 个忍术全部落在一屏内
+const CARD_W := 360.0
+const CARD_H := 66.0
+const CARD_GAP := 68.0
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	## 与任务看板同理：父节点是 CanvasLayer，必须同时设置 anchors 和 offsets，
+	## 否则 size 停在 (0,0)，绘制正常但点击收不到。
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 func on_opened() -> void:
@@ -84,14 +94,18 @@ func _panel_rect() -> Rect2:
 
 func _slot_rect(i: int) -> Rect2:
 	var p := _panel_rect()
-	return Rect2(p.position.x + 26.0, p.position.y + 92.0 + float(i) * 86.0, 200.0, 74.0)
+	return Rect2(p.position.x + 26.0, p.position.y + HEADER_H + float(i) * SLOT_GAP, 200.0, SLOT_H)
 
 
 func _grid_rect(j: int) -> Rect2:
 	var p := _panel_rect()
 	var col := j % 2
 	var row := int(j / 2.0)
-	return Rect2(p.position.x + 256.0 + float(col) * 372.0, p.position.y + 92.0 + float(row) * 88.0, 356.0, 78.0)
+	return Rect2(
+		p.position.x + 252.0 + float(col) * (CARD_W + 12.0),
+		p.position.y + HEADER_H + float(row) * CARD_GAP,
+		CARD_W, CARD_H
+	)
 
 
 # ---------------------------------------------------------------- 绘制
@@ -142,12 +156,13 @@ func _draw_grid(font: Font) -> void:
 		var equipped := Array(player.jutsu_slots).has(id)
 		draw_rect(r, Color(0.16, 0.16, 0.19) if not equipped else Color(0.2, 0.22, 0.26))
 		draw_rect(r, Color(0.95, 0.78, 0.35) if equipped else Color(0.3, 0.3, 0.33), false, 2.0 if equipped else 1.0)
-		Data.draw_jutsu_icon(self, id, r.position + Vector2(38.0, 39.0), 22.0)
-		draw_string(font, r.position + Vector2(76.0, 26.0), Data.s(String(cfg.get("name_key", id))), HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("f0ece3"))
-		draw_string(font, r.position + Vector2(76.0, 46.0), _detail(id, cfg), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.66, 0.66, 0.7))
-		draw_string(font, r.position + Vector2(76.0, 66.0), "RANK " + String(cfg.get("rank", "-")), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.72, 0.6, 0.35))
+		Data.draw_jutsu_icon(self, id, r.position + Vector2(34.0, CARD_H / 2.0), 19.0)
+		draw_string(font, r.position + Vector2(68.0, 25.0), Data.s(String(cfg.get("name_key", id))), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("f0ece3"))
+		draw_string(font, r.position + Vector2(68.0, 47.0), _detail(id, cfg), HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(0.66, 0.66, 0.7))
+		## 右对齐标记：x 给卡片左边、width 给到右边界（draw_string 只在 width > 0 时才右对齐）
+		draw_string(font, Vector2(r.position.x, r.position.y + 24.0), "RANK " + String(cfg.get("rank", "-")), HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0, 11, Color(0.72, 0.6, 0.35))
 		if equipped:
-			draw_string(font, r.position + Vector2(r.size.x - 62.0, 22.0), "ON", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.95, 0.8, 0.35))
+			draw_string(font, Vector2(r.position.x, r.position.y + 47.0), "ON", HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14.0, 12, Color(0.95, 0.8, 0.35))
 
 
 func _detail(id: String, cfg: Dictionary) -> String:

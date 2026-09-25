@@ -12,8 +12,8 @@ const ATTACK_RECOVER := 1.15
 const ATTACK_DAMAGE := 22.0
 const ATTACK_KNOCKBACK := 560.0
 const ATTACK_ARC := deg_to_rad(115.0)
-const PATROL_SPEED := 35.0
-const CHASE_SPEED := 108.0
+const PATROL_SPEED := 21.0
+const CHASE_SPEED := 65.0
 const SWING_LUNGE := 210.0
 
 

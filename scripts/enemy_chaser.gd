@@ -13,8 +13,8 @@ const ATTACK_RECOVER := 0.75
 const ATTACK_DAMAGE := 9.0
 const ATTACK_KNOCKBACK := 260.0
 const ATTACK_ARC := deg_to_rad(85.0)
-const PATROL_SPEED := 55.0
-const CHASE_SPEED := 175.0
+const PATROL_SPEED := 33.0
+const CHASE_SPEED := 105.0
 
 var state := S.PATROL
 var state_timer := 0.0

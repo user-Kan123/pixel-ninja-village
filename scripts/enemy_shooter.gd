@@ -13,7 +13,7 @@ const ATTACK_RECOVER := 1.3
 const ATTACK_DAMAGE := 8.0
 const ATTACK_KNOCKBACK := 180.0
 const KUNAI_SPEED := 430.0
-const REPOSITION_SPEED := 150.0
+const REPOSITION_SPEED := 90.0
 
 var state := S.IDLE
 var state_timer := 0.0

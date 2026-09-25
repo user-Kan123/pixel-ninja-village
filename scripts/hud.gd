@@ -23,7 +23,7 @@ const COL_DIM := Color("b8b2a4")
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 func show_notice(text: String) -> void:
@@ -118,8 +118,10 @@ func _draw_jutsu_slots(font: Font) -> void:
 
 func _draw_counters(font: Font) -> void:
 	var size_v := get_viewport_rect().size
-	draw_string(font, Vector2(size_v.x - 24.0, 34.0), Data.s("hud.kills") + "  %d" % game.kill_count, HORIZONTAL_ALIGNMENT_RIGHT, -1, 15, COL_TEXT)
-	draw_string(font, Vector2(size_v.x - 24.0, 56.0), "%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("hud.day") % Flow.day], HORIZONTAL_ALIGNMENT_RIGHT, -1, 13, Color("e0c447"))
+	## draw_string 只在 width > 0 时才应用 alignment：传 -1 会让 RIGHT 退化成左对齐，
+	## 文本从 size_v.x - 24 起往右画、直接溢出屏幕。所以右对齐一律用 (0, y) + width = 右边界。
+	draw_string(font, Vector2(0.0, 34.0), Data.s("hud.kills") + "  %d" % game.kill_count, HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 15, COL_TEXT)
+	draw_string(font, Vector2(0.0, 56.0), "%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("hud.day") % Flow.day], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 13, Color("e0c447"))
 	draw_string(font, Vector2(size_v.x / 2.0 - 130.0, 34.0), Data.s("hud.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COL_DIM)
 	## 任务目标
 	var obj: String = game.objective_text()
@@ -127,10 +129,10 @@ func _draw_counters(font: Font) -> void:
 		draw_string(font, Vector2(size_v.x / 2.0 - 110.0, 58.0), Data.s("hud.objective") + "：" + obj, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.85, 0.45))
 	if player.buff_timer > 0.0 and not player.buff_id.is_empty():
 		var cfg: Dictionary = Data.jutsu.get(player.buff_id, {})
-		draw_string(font, Vector2(size_v.x - 24.0, 80.0), "%s %0.1fs" % [Data.s(String(cfg.get("name_key", player.buff_id))), player.buff_timer], HORIZONTAL_ALIGNMENT_RIGHT, -1, 13, Color(0.6, 0.9, 1.0))
+		draw_string(font, Vector2(0.0, 80.0), "%s %0.1fs" % [Data.s(String(cfg.get("name_key", player.buff_id))), player.buff_timer], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 13, Color(0.6, 0.9, 1.0))
 	if player.combo_count >= 2:
 		var t: float = clampf(player.combo_timer / 1.2, 0.0, 1.0)
-		draw_string(font, Vector2(size_v.x - 24.0, 112.0), "%s x %d" % [Data.s("hud.combo"), player.combo_count], HORIZONTAL_ALIGNMENT_RIGHT, -1, 26, Color(1.0, 0.85, 0.3, 0.4 + 0.6 * t))
+		draw_string(font, Vector2(0.0, 112.0), "%s x %d" % [Data.s("hud.combo"), player.combo_count], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 26, Color(1.0, 0.85, 0.3, 0.4 + 0.6 * t))
 
 
 func _draw_state_hints(font: Font) -> void:
@@ -163,7 +165,7 @@ func _draw_state_hints(font: Font) -> void:
 		var ready := float(player.jutsu_cd.get("substitution", 0.0)) <= 0.0
 		var key := "hud.sub_ready" if ready else "hud.sub_cd"
 		var c2 := Color(0.55, 0.85, 0.6) if ready else Color(0.55, 0.55, 0.55)
-		draw_string(font, Vector2(size_v.x - 24.0, 134.0), Data.s(key), HORIZONTAL_ALIGNMENT_RIGHT, -1, 12, c2)
+		draw_string(font, Vector2(0.0, 134.0), Data.s(key), HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 12, c2)
 	## 交互提示（回村 / 结算）
 	var ihint: String = game.current_interact_hint()
 	if ihint != "":
@@ -172,7 +174,7 @@ func _draw_state_hints(font: Font) -> void:
 		draw_rect(r, Color(0, 0, 0, 0.55))
 		draw_rect(r, Color(0.9, 0.75, 0.4, 0.9), false, 1.5)
 		draw_string(font, r.position + Vector2(12.0, 25.0), ihint, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("f5e9c8"))
-	draw_string(font, Vector2(size_v.x - 24.0, size_v.y - 18.0), Data.s("hud.controls"), HORIZONTAL_ALIGNMENT_RIGHT, -1, 12, Color(1, 1, 1, 0.45))
+	draw_string(font, Vector2(0.0, size_v.y - 18.0), Data.s("hud.controls"), HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 12, Color(1, 1, 1, 0.45))
 
 
 func _draw_notice(font: Font) -> void:
