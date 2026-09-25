@@ -76,6 +76,13 @@ func _draw() -> void:
 	var c := _color()
 	var y := -10.0 + bob
 	if kind == "intel":
+		## 竖直光柱（远处可见）：下宽上窄的梯形 + 地面光圈，轻微脉动
+		var pulse := 0.65 + 0.35 * sin(age * 3.0)
+		var h := 72.0
+		draw_colored_polygon(PackedVector2Array([
+			Vector2(-8, y), Vector2(8, y), Vector2(2.5, y - h), Vector2(-2.5, y - h),
+		]), Color(1.0, 0.85, 0.4, 0.22 * pulse))
+		draw_arc(Vector2(0, 2), 14.0, 0.0, TAU, 24, Color(1.0, 0.85, 0.4, 0.5 * pulse), 2.0)
 		## 卷轴：竖长条 + 上下两个端头
 		draw_rect(Rect2(-4.0, y - 6.0, 8.0, 12.0), Color(0.92, 0.88, 0.75))
 		draw_rect(Rect2(-4.0, y - 6.0, 8.0, 12.0), Color(0.4, 0.35, 0.25, 0.9), false, 1.0)

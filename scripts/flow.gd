@@ -17,6 +17,8 @@ var unlocked_jutsu: Array[String] = []
 ## 运行时任务状态
 var mission_id := ""
 var mission_cfg: Dictionary = {}
+## 已在看板接取、但还没从村口大门出发的任务
+var pending_mission := ""
 
 
 func _ready() -> void:
@@ -33,10 +35,22 @@ func in_mission() -> bool:
 	return mission_id != ""
 
 
+## 看板接取：只登记待出发任务，玩家需走到村口大门出发
+func accept_mission(id: String) -> void:
+	pending_mission = id
+
+
+## 村口大门出发：清空待出发，进入野外任务场景
+func depart_mission() -> void:
+	var id := pending_mission
+	pending_mission = ""
+	start_mission(id)
+
+
 func start_mission(id: String) -> void:
 	mission_id = id
 	mission_cfg = Data.missions.get(id, {}).duplicate(true)
-	get_tree().change_scene_to_file("res://scenes/main.tscn")
+	get_tree().change_scene_to_file("res://scenes/wild.tscn")
 
 
 func start_training() -> void:

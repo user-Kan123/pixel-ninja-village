@@ -1,21 +1,50 @@
 extends Node2D
-## 村庄：玩家日常据点。任务看板（接任务）、训练场入口、休息处（存档）。
+## 村庄：玩家日常据点。任务看板（接任务）→ 村口大门（出发）；训练场入口；休息处（存档）。
 ## 村内没有敌人，等级 < 15 时也不会触发遭遇战（见设计基线 §1 决策 2）。
+## 建筑名全部走名词表（Data.s），本文件不含专有名词。
 
-const ARENA_SIZE := Vector2(1600.0, 1000.0)
+var arena_size := Vector2(2000.0, 1280.0)
 
-## 建筑（也是碰撞体）：名称走名词表，这里只放几何
-const BUILDINGS := [
-	{"rect": Rect2(620, 110, 360, 150), "name": "火影楼", "color": Color("7a4b38"), "roof": Color("5a3527")},
-	{"rect": Rect2(170, 370, 210, 130), "name": "忍具店", "color": Color("5f6650"), "roof": Color("454a3a")},
-	{"rect": Rect2(1170, 350, 230, 130), "name": "公寓", "color": Color("66586e"), "roof": Color("4a3f52")},
-	{"rect": Rect2(640, 690, 320, 110), "name": "澡堂", "color": Color("4e5f6b"), "roof": Color("38454e")},
+## 建筑（也是碰撞体）
+var BUILDINGS := [
+	{"rect": Rect2(760, 150, 440, 200), "key": "building.hokage", "style": "hokage",
+		"wall": Color("c0483a"), "roof": Color("7a2e26"), "trim": Color("e8d8b8")},
+	{"rect": Rect2(140, 160, 300, 178), "key": "building.school", "style": "school",
+		"wall": Color("d8c9a8"), "roof": Color("6a5a44"), "trim": Color("f0e6d0")},
+	{"rect": Rect2(1290, 185, 190, 145), "key": "building.mission", "style": "mission",
+		"wall": Color("b89a6a"), "roof": Color("6e5232"), "trim": Color("e0d0a8")},
+	{"rect": Rect2(160, 540, 250, 158), "key": "building.ramen", "style": "ramen",
+		"wall": Color("d8b088"), "roof": Color("8a5a38"), "trim": Color("e8dcc0")},
+	{"rect": Rect2(1580, 520, 250, 162), "key": "building.shop", "style": "shop",
+		"wall": Color("a88a5a"), "roof": Color("5e4630"), "trim": Color("d8c8a0")},
+	{"rect": Rect2(620, 770, 260, 168), "key": "building.apartment", "style": "apartment",
+		"wall": Color("c0b0a0"), "roof": Color("6a5a52"), "trim": Color("e0d8cc")},
+	{"rect": Rect2(1490, 870, 270, 178), "key": "building.hospital", "style": "hospital",
+		"wall": Color("e4e8e4"), "roof": Color("7a8a90"), "trim": Color("f0f4f0")},
+	{"rect": Rect2(250, 900, 270, 172), "key": "building.bath", "style": "bath",
+		"wall": Color("b8c8d0"), "roof": Color("5a7a8c"), "trim": Color("e0e8ec")},
 ]
 
-const BOARD_POS := Vector2(560.0, 620.0)
-const GATE_POS := Vector2(1480.0, 800.0)
-const SHRINE_POS := Vector2(150.0, 800.0)
-const INTERACT_RADIUS := 70.0
+## 道路 / 广场
+var PATHS := [
+	Rect2(600, 350, 800, 200),
+	Rect2(0, 650, 2000, 82),
+	Rect2(950, 340, 100, 880),
+	Rect2(300, 420, 90, 240),
+	Rect2(1580, 420, 90, 240),
+	Rect2(150, 650, 130, 70),
+	Rect2(1710, 650, 130, 70),
+	Rect2(620, 700, 80, 90),
+	Rect2(260, 830, 110, 90),
+	Rect2(1490, 830, 110, 90),
+]
+
+## 交互点
+const BOARD_POS := Vector2(1385.0, 370.0)
+const TORII_POS := Vector2(1790.0, 250.0)
+const SHRINE_POS := Vector2(520.0, 600.0)
+const GATE_POS := Vector2(1000.0, 1180.0)
+const INTERACT_RADIUS := 72.0
 
 var player: Player
 var hud: VillageHud
@@ -52,10 +81,10 @@ func _make_container(n: String) -> Node2D:
 func _build_bounds() -> void:
 	var t := 60.0
 	var rects := [
-		Rect2(-t, -t, ARENA_SIZE.x + 2.0 * t, t),
-		Rect2(-t, ARENA_SIZE.y, ARENA_SIZE.x + 2.0 * t, t),
-		Rect2(-t, 0.0, t, ARENA_SIZE.y),
-		Rect2(ARENA_SIZE.x, 0.0, t, ARENA_SIZE.y),
+		Rect2(-t, -t, arena_size.x + 2.0 * t, t),
+		Rect2(-t, arena_size.y, arena_size.x + 2.0 * t, t),
+		Rect2(-t, 0.0, t, arena_size.y),
+		Rect2(arena_size.x, 0.0, t, arena_size.y),
 	]
 	for r in rects:
 		_add_static_rect(r)
@@ -75,7 +104,7 @@ func _add_static_rect(r: Rect2) -> void:
 func _spawn_player() -> void:
 	player = Player.new()
 	player.game = self
-	player.position = ARENA_SIZE * 0.5 + Vector2(0.0, 180.0)
+	player.position = Vector2(1000.0, 1060.0)
 	add_child(player)
 	Flow.apply_to_player(player)
 
@@ -101,14 +130,26 @@ func _spawn_ui() -> void:
 	hud_layer.add_child(loadout_ui)
 
 
+# ---------------------------------------------------------------- 任务接取
+
+## 看板选择任务：登记待出发，引导玩家去村口大门
+func accept_mission_from_board(id: String) -> void:
+	Flow.accept_mission(id)
+	close_board()
+	hud.show_notice(Data.s("village.go_gate"))
+
+
 # ---------------------------------------------------------------- 交互
 
 func _nearest_interactable() -> Dictionary:
 	var spots := [
 		{"pos": BOARD_POS, "kind": "board", "hint": Data.s("village.board") + " · " + Data.s("village.open")},
-		{"pos": GATE_POS, "kind": "gate", "hint": Data.s("village.gate") + " · " + Data.s("village.enter")},
+		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("village.gate") + " · " + Data.s("village.enter")},
 		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("village.shrine") + " · " + Data.s("village.rest")},
 	]
+	## 村口大门：只有接了待出发任务时才能交互
+	if Flow.pending_mission != "":
+		spots.append({"pos": GATE_POS, "kind": "depart", "hint": Data.s("village.depart")})
 	var best := {}
 	var best_d := INTERACT_RADIUS
 	for s in spots:
@@ -132,13 +173,16 @@ func on_interact() -> void:
 	match String(spot["kind"]):
 		"board":
 			toggle_board()
-		"gate":
+		"torii":
 			Flow.sync_from_player(player)
 			Flow.start_training()
 		"shrine":
 			Flow.sync_from_player(player)
 			Flow.save_game()
 			hud.show_notice(Data.s("village.saved"))
+		"depart":
+			Flow.sync_from_player(player)
+			Flow.depart_mission()
 
 
 func toggle_board() -> void:
@@ -205,12 +249,12 @@ func on_player_level_up(_level: int) -> void:
 
 
 func on_player_died() -> void:
-	## 村内不应死亡；兜底：回满血瞬回中心
+	## 村内不应死亡；兜底：回满血瞬回主干道
 	if player != null:
 		player.dead = false
 		player.hp = player.max_hp
 		player.state = Player.State.MOVE
-		player.global_position = ARENA_SIZE * 0.5
+		player.global_position = Vector2(1000.0, 900.0)
 
 
 func on_enemy_died(_enemy: Node) -> void:
@@ -223,8 +267,8 @@ func on_intel_collected() -> void:
 
 func clamp_to_arena(pos: Vector2, margin := 24.0) -> Vector2:
 	return Vector2(
-		clampf(pos.x, margin, ARENA_SIZE.x - margin),
-		clampf(pos.y, margin, ARENA_SIZE.y - margin)
+		clampf(pos.x, margin, arena_size.x - margin),
+		clampf(pos.y, margin, arena_size.y - margin)
 	)
 
 
@@ -280,39 +324,213 @@ func unregister_wall(w: EarthWall) -> void:
 # ---------------------------------------------------------------- 绘制
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, ARENA_SIZE), Color("3d5c3a"))
-	## 草地纹理（稀疏色块）
+	## 草底
+	draw_rect(Rect2(Vector2.ZERO, arena_size), Color("3d5c3a"))
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 42
-	for i in 90:
-		var p := Vector2(rng.randf_range(0.0, ARENA_SIZE.x), rng.randf_range(0.0, ARENA_SIZE.y))
+	for i in 120:
+		var p := Vector2(rng.randf_range(0.0, arena_size.x), rng.randf_range(0.0, arena_size.y))
+		if _is_cleared(p):
+			continue
 		draw_circle(p, rng.randf_range(2.0, 5.0), Color(0.25, 0.42, 0.23, 0.5))
-	## 广场与主干道
-	draw_rect(Rect2(430, 520, 740, 240), Color("8a7a5c"))
-	draw_rect(Rect2(0, 590, ARENA_SIZE.x, 70), Color("8a7a5c"))
-	draw_rect(Rect2(760, 260, 80, 740), Color("8a7a5c"))
+	## 道路 / 广场
+	for pr in PATHS:
+		draw_rect(pr, Color("8a7a5c"))
+	## 火影岩（在建筑后）
+	_draw_mountain()
 	## 建筑
-	var font := Data.font()
 	for b in BUILDINGS:
-		var r: Rect2 = b["rect"]
-		draw_rect(r.grow(4.0), b["roof"])
-		draw_rect(r, b["color"])
-		draw_rect(r, Color(0.1, 0.08, 0.06, 0.9), false, 2.0)
-		draw_rect(Rect2(r.get_center() + Vector2(-14, r.size.y / 2.0 - 30), Vector2(28, 30)), Color(0.15, 0.12, 0.1))
-		draw_string(font, r.position + Vector2(10.0, 26.0), String(b["name"]), HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color("f0ece3"))
-	## 任务看板
+		_draw_building(b)
+	## 自然装饰（树 / 灌木），避开道路建筑
+	_draw_nature()
+	## 路灯
+	for lx in [200, 600, 1300, 1800]:
+		_draw_lamp(Vector2(lx, 692))
+	for ly in [480, 820, 1080]:
+		_draw_lamp(Vector2(1000, ly))
+	## 交互设施
+	_draw_board()
+	_draw_torii(TORII_POS)
+	_draw_shrine()
+	_draw_village_gate()
+
+
+func _is_cleared(p: Vector2) -> bool:
+	for pr in PATHS:
+		if pr.has_point(p):
+			return true
+	for b in BUILDINGS:
+		if (b["rect"] as Rect2).grow(24.0).has_point(p):
+			return true
+	if p.x > 640.0 and p.x < 1320.0 and p.y < 150.0:
+		return true
+	return false
+
+
+func _draw_nature() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99
+	for i in 90:
+		var p := Vector2(rng.randf_range(40.0, arena_size.x - 40.0), rng.randf_range(40.0, arena_size.y - 40.0))
+		if _is_cleared(p):
+			continue
+		if rng.randf() < 0.5:
+			_draw_tree(p, rng.randf_range(16.0, 24.0))
+		else:
+			draw_circle(p, rng.randf_range(6.0, 10.0), Color("355f32"))
+
+
+func _draw_tree(c: Vector2, s: float) -> void:
+	draw_rect(Rect2(c + Vector2(-3, 0), Vector2(6, 12)), Color("5a4230"))
+	draw_circle(c + Vector2(0, -s * 0.9), s, Color("2f5230"))
+	draw_circle(c + Vector2(-s * 0.4, -s * 1.3), s * 0.6, Color("3d6638"))
+
+
+func _draw_lamp(c: Vector2) -> void:
+	draw_rect(Rect2(c + Vector2(-2, -26), Vector2(4, 26)), Color("4a3826"))
+	draw_circle(c + Vector2(0, -28), 6.0, Color("f0d878"))
+	draw_circle(c + Vector2(0, -28), 10.0, Color(1.0, 0.9, 0.5, 0.25))
+
+
+# ---------------------------------------------------------------- 火影岩
+
+func _draw_mountain() -> void:
+	## 山体
+	for d in [Vector2(700, 60), Vector2(820, 40), Vector2(980, 30), Vector2(1140, 40), Vector2(1280, 60),
+			Vector2(760, 90), Vector2(980, 80), Vector2(1200, 90)]:
+		draw_circle(d, 70.0, Color("6e6658"))
+	## 四张脸
+	for fx in [800.0, 940.0, 1080.0, 1220.0]:
+		_draw_face(Vector2(fx, 78.0))
+
+
+func _draw_face(c: Vector2) -> void:
+	draw_circle(c, 40.0, Color("a8a094"))
+	draw_rect(Rect2(c + Vector2(-16, -8), Vector2(9, 6)), Color("4a4640"))
+	draw_rect(Rect2(c + Vector2(7, -8), Vector2(9, 6)), Color("4a4640"))
+	draw_line(c + Vector2(-12, 12), c + Vector2(12, 12), Color("4a4640"), 2.0)
+
+
+# ---------------------------------------------------------------- 建筑
+
+func _draw_building(b: Dictionary) -> void:
+	var r: Rect2 = b["rect"]
+	var wall: Color = b["wall"]
+	var roof: Color = b["roof"]
+	var trim: Color = b["trim"]
+	var style: String = b["style"]
+	## 屋檐投影
+	draw_rect(r.grow(7), roof.darkened(0.45))
+	## 屋顶（上 60%）
+	var roof_h := r.size.y * 0.6
+	var roof_r := Rect2(r.position, Vector2(r.size.x, roof_h))
+	draw_rect(roof_r, roof)
+	for i in 4:
+		var yy: float = r.position.y + roof_h * float(i + 1) / 5.0
+		draw_line(Vector2(r.position.x + 5, yy), Vector2(r.end.x - 5, yy), roof.darkened(0.22), 1.5)
+	## 正面墙
+	var wall_r := Rect2(Vector2(r.position.x, r.position.y + roof_h), Vector2(r.size.x, r.size.y - roof_h))
+	draw_rect(wall_r, wall)
+	draw_line(Vector2(r.position.x, r.end.y), Vector2(r.end.x, r.end.y), wall.darkened(0.4), 3.0)
+	## 门
+	var door := Rect2(r.get_center().x - 13, r.end.y - 42, 26, 42)
+	draw_rect(door, Color("3a2c20"))
+	draw_rect(door, trim, false, 1.5)
+	## 两侧窗
+	var win_y := r.position.y + roof_h + 12
+	for sx in [r.position.x + 22, r.end.x - 44]:
+		var win := Rect2(sx, win_y, 22, 22)
+		draw_rect(win, Color("7fa8c8"))
+		draw_rect(win, trim, false, 1.5)
+		draw_line(win.position + Vector2(11, 0), win.position + Vector2(11, 22), trim, 1.0)
+	## 名称招牌
+	draw_string(Data.font(), r.position + Vector2(8, 22), Data.s(String(b["key"])),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, trim)
+	_style_extras(style, r, wall, wall_r, trim)
+
+
+func _style_extras(style: String, r: Rect2, wall: Color, wall_r: Rect2, trim: Color) -> void:
+	var roof_h := r.size.y * 0.6
+	match style:
+		"hokage":
+			## 屋顶金色徽章 + 顶层楼阁
+			var top := Vector2(r.get_center().x, r.position.y + 16)
+			draw_circle(top, 13.0, Color("e8c84a"))
+			draw_string(Data.font(), top + Vector2(-7, 6), "火", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("7a2e26"))
+			draw_rect(Rect2(r.get_center().x - 40, r.position.y - 26, 80, 26), wall)
+			draw_rect(Rect2(r.get_center().x - 40, r.position.y - 26, 80, 26), trim, false, 1.5)
+		"school":
+			## 屋顶小旗 + 额外窗
+			draw_line(Vector2(r.end.x - 30, r.position.y), Vector2(r.end.x - 30, r.position.y - 24), trim, 2.0)
+			draw_rect(Rect2(r.end.x - 28, r.position.y - 24, 18, 12), Color("c8483a"))
+		"ramen":
+			## 红色波浪遮阳帘
+			var n := 8
+			for i in n:
+				var cx: float = wall_r.position.x + float(i) * wall_r.size.x / n
+				draw_circle(Vector2(cx, wall_r.position.y + 4), 9.0, Color("c84438"))
+		"shop":
+			## 橱窗苦无标记
+			draw_string(Data.font(), Vector2(r.position.x + 26, wall_r.position.y + 30), "卍",
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 16, trim.darkened(0.2))
+		"apartment":
+			## 顶层额外两窗
+			for sx in [r.position.x + 60, r.end.x - 82]:
+				draw_rect(Rect2(sx, r.position.y + roof_h - 26, 20, 18), Color("7fa8c8"))
+				draw_rect(Rect2(sx, r.position.y + roof_h - 26, 20, 18), trim, false, 1.0)
+		"hospital":
+			## 红十字牌
+			var cross := r.get_center() + Vector2(0, roof_h * 0.4)
+			draw_rect(Rect2(cross + Vector2(-4, -12), Vector2(8, 24)), Color("c8383a"))
+			draw_rect(Rect2(cross + Vector2(-12, -4), Vector2(24, 8)), Color("c8383a"))
+		"bath":
+			## 烟囱 + 热气
+			var chx := r.end.x - 30
+			draw_rect(Rect2(chx, r.position.y - 18, 14, 26), trim)
+			draw_arc(Vector2(chx + 7, r.position.y - 24), 6.0, 0.0, PI, 12, Color(0.8, 0.9, 0.95, 0.6), 1.5)
+
+
+# ---------------------------------------------------------------- 交互设施
+
+func _draw_board() -> void:
 	draw_rect(Rect2(BOARD_POS + Vector2(-36, -52), Vector2(72, 44)), Color("8a6a42"))
 	draw_rect(Rect2(BOARD_POS + Vector2(-36, -52), Vector2(72, 44)), Color(0.2, 0.14, 0.08, 0.9), false, 2.0)
 	draw_rect(Rect2(BOARD_POS + Vector2(-4, -8), Vector2(8, 26)), Color("6a4f30"))
-	draw_string(font, BOARD_POS + Vector2(-30, -30), Data.s("village.board"), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f0e6c8"))
-	## 训练场入口（鸟居）
-	draw_rect(Rect2(GATE_POS + Vector2(-40, -60), Vector2(10, 60)), Color("a03428"))
-	draw_rect(Rect2(GATE_POS + Vector2(30, -60), Vector2(10, 60)), Color("a03428"))
-	draw_rect(Rect2(GATE_POS + Vector2(-48, -68), Vector2(96, 12)), Color("b8402f"))
-	draw_rect(Rect2(GATE_POS + Vector2(-34, -48), Vector2(68, 8)), Color("a03428"))
-	## 休息处（小祠堂）
+	draw_string(Data.font(), BOARD_POS + Vector2(-30, -30), Data.s("village.board"),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f0e6c8"))
+
+
+func _draw_torii(pos: Vector2) -> void:
+	draw_rect(Rect2(pos + Vector2(-40, -60), Vector2(10, 60)), Color("a03428"))
+	draw_rect(Rect2(pos + Vector2(30, -60), Vector2(10, 60)), Color("a03428"))
+	draw_rect(Rect2(pos + Vector2(-48, -68), Vector2(96, 12)), Color("b8402f"))
+	draw_rect(Rect2(pos + Vector2(-34, -48), Vector2(68, 8)), Color("a03428"))
+
+
+func _draw_shrine() -> void:
 	draw_rect(Rect2(SHRINE_POS + Vector2(-22, -34), Vector2(44, 34)), Color("7a6a58"))
 	draw_colored_polygon(PackedVector2Array([
 		SHRINE_POS + Vector2(-30, -34), SHRINE_POS + Vector2(30, -34), SHRINE_POS + Vector2(0, -58),
 	]), Color("5a4a3a"))
 	draw_rect(Rect2(SHRINE_POS + Vector2(-8, -22), Vector2(16, 22)), Color(0.12, 0.1, 0.08))
+
+
+func _draw_village_gate() -> void:
+	var g := GATE_POS
+	var active: bool = Flow.pending_mission != ""
+	## 门柱
+	draw_rect(Rect2(g + Vector2(-44, -70), Vector2(20, 70)), Color("6a5238"))
+	draw_rect(Rect2(g + Vector2(24, -70), Vector2(20, 70)), Color("6a5238"))
+	draw_rect(Rect2(g + Vector2(-48, -78), Vector2(28, 12)), Color("8a7a68"))
+	draw_rect(Rect2(g + Vector2(20, -78), Vector2(28, 12)), Color("8a7a68"))
+	## 横梁 + 瓦顶
+	draw_rect(Rect2(g + Vector2(-58, -100), Vector2(116, 18)), Color("7a5a3c"))
+	draw_rect(Rect2(g + Vector2(-64, -114), Vector2(128, 14)), Color("5a4230"))
+	## 门扇
+	draw_rect(Rect2(g + Vector2(-24, -50), Vector2(48, 50)), Color("4a3826"))
+	## 牌匾
+	draw_string(Data.font(), g + Vector2(-42, -88), Data.s("gate.name"),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("f0e6c8"))
+	## 待出发时发光提示
+	if active:
+		draw_arc(g + Vector2(0, -40), 78.0, 0.0, TAU, 32, Color(1.0, 0.9, 0.5, 0.35 + 0.2 * sin(Time.get_ticks_msec() * 0.005)), 2.5)

@@ -26,6 +26,20 @@ const MAX_LEVEL := 20
 const SLOT_UNLOCK_LEVELS := [1, 1, 1, 6, 12]
 const DEFAULT_LOADOUT := ["blink", "fireball", "great_fireball", "thunder_dash", "shadow_clones"]
 
+## 玩家像素外观（鸣人经典橙蓝配色）
+const NINJA_CFG := {
+	"hair": Color("f5c542"), "hair_dark": Color("d99a2b"),
+	"skin": Color("f2c9a0"), "skin_dark": Color("d9a574"),
+	"eye": Color("3a6ab8"),
+	"band": Color("2a3a5c"), "plate": Color("c9cdd6"),
+	"outfit": Color("e8833a"), "outfit_dark": Color("c96528"),
+	"trim": Color("eee8da"), "belt": Color("3a3a44"),
+	"pants": Color("3a4a7a"), "pants_dark": Color("2a3658"),
+	"shoes": Color("2b2b33"),
+}
+## 像素忍者绘制中心（脚下锚点）
+const NINJA_ANCHOR := Vector2(0, -24)
+
 const COMBO_STEPS := [
 	{"damage": 8.0, "knockback": 170.0, "windup": 0.08, "active": 0.1, "recovery": 0.14, "lunge": 250.0, "hitstop": 0.045},
 	{"damage": 9.0, "knockback": 190.0, "windup": 0.07, "active": 0.1, "recovery": 0.15, "lunge": 270.0, "hitstop": 0.045},
@@ -109,6 +123,10 @@ var slash_heavy := false
 var dead := false
 var mouse_world := Vector2.ZERO
 
+## 走路动画
+var walk_frame := 0
+var walk_anim_t := 0.0
+
 
 func _ready() -> void:
 	add_to_group("player")
@@ -126,8 +144,8 @@ func _ready() -> void:
 	cam.position_smoothing_speed = 8.0
 	cam.limit_left = 0
 	cam.limit_top = 0
-	cam.limit_right = int(game.ARENA_SIZE.x)
-	cam.limit_bottom = int(game.ARENA_SIZE.y)
+	cam.limit_right = int(game.arena_size.x)
+	cam.limit_bottom = int(game.arena_size.y)
 	add_child(cam)
 
 
@@ -316,6 +334,7 @@ func _physics_process(delta: float) -> void:
 			pass
 	velocity = desired + knockback_velocity
 	move_and_slide()
+	_update_walk(delta)
 	_tick_orb(delta)
 
 	match state:
@@ -334,6 +353,17 @@ func _physics_process(delta: float) -> void:
 		_:
 			pass
 	queue_redraw()
+
+
+func _update_walk(delta: float) -> void:
+	if not dead and state == State.MOVE and velocity.length() > 40.0:
+		walk_anim_t += delta
+		if walk_anim_t >= 0.13:
+			walk_anim_t = 0.0
+			walk_frame = 1 - walk_frame
+	else:
+		walk_frame = 0
+		walk_anim_t = 0.0
 
 
 # ---------------------------------------------------------------- 近战 / 苦无
@@ -894,55 +924,53 @@ func _die() -> void:
 
 func _draw() -> void:
 	if dead:
-		draw_rect(Rect2(-12, -16, 24, 32), Color(0.35, 0.35, 0.35, 0.6))
+		## 倒地：灰色残影
+		draw_rect(Rect2(-16, 8, 32, 9), Color(0.35, 0.35, 0.35, 0.5))
+		draw_line(Vector2(-14, 4), Vector2(14, 14), Color(0.5, 0.5, 0.5, 0.6), 2.0)
 		return
-	var body_col := Color("4d86d8")
-	if flash_timer > 0.0:
-		body_col = Color.WHITE
-	if buff_timer > 0.0:
-		body_col = body_col.lerp(Color(0.7, 0.92, 1.0), 0.35)
+	## 像素忍者
+	var cfg: Dictionary = NINJA_CFG.duplicate()
+	cfg["flash_a"] = clampf(flash_timer / 0.15, 0.0, 1.0)
 	if invuln_timer > 0.0:
-		body_col.a = 0.45
-	draw_rect(Rect2(-12, -16, 24, 32), body_col)
-	draw_rect(Rect2(-12, -16, 24, 32), Color(0.1, 0.1, 0.12, 0.9), false, 2.0)
-	draw_rect(Rect2(-12, -9, 24, 5), Color(0.95, 0.92, 0.85, body_col.a))
+		cfg["alpha"] = 0.5
+	PixelArt.draw_ninja(self, NINJA_ANCHOR, cfg, walk_frame, 3.0)
+	## 朝向指示（小三角）
 	var aim := (mouse_world - global_position).normalized()
 	if aim == Vector2.ZERO:
 		aim = Vector2.RIGHT
 	var perp := Vector2(-aim.y, aim.x)
 	draw_colored_polygon(PackedVector2Array([
-		aim * 22.0 + perp * 5.0, aim * 30.0, aim * 22.0 - perp * 5.0,
-	]), Color(0.95, 0.9, 0.8, body_col.a))
+		aim * 24.0 + perp * 4.0, aim * 31.0, aim * 24.0 - perp * 4.0,
+	]), Color(0.95, 0.9, 0.8, 0.85))
+	## buff 蓝色光环
 	if buff_timer > 0.0:
 		var pulse := 0.5 + 0.5 * sin(buff_timer * 14.0)
-		draw_arc(Vector2.ZERO, 26.0 + pulse * 3.0, 0.0, TAU, 22, Color(0.6, 0.9, 1.0, 0.55 + 0.35 * pulse), 2.0)
+		draw_arc(NINJA_ANCHOR, 31.0 + pulse * 3.0, 0.0, TAU, 22, Color(0.6, 0.9, 1.0, 0.5 + 0.3 * pulse), 2.0)
 	if slash_timer > 0.0:
 		var t: float = clampf(slash_timer / 0.25, 0.0, 1.0)
 		var col := Color(1.0, 1.0, 0.95, t * 0.85)
 		if buff_timer > 0.0:
 			col = Color(0.7, 0.95, 1.0, t * 0.9)
 		var a0 := slash_dir.angle()
-		draw_arc(Vector2.ZERO, MELEE_RANGE * 0.85, a0 - MELEE_ARC, a0 + MELEE_ARC, 14, col, 5.0 if slash_heavy else 3.0)
+		draw_arc(NINJA_ANCHOR, MELEE_RANGE * 0.85, a0 - MELEE_ARC, a0 + MELEE_ARC, 14, col, 5.0 if slash_heavy else 3.0)
 		if slash_heavy:
-			draw_arc(Vector2.ZERO, MELEE_RANGE * 0.55, a0 - MELEE_ARC * 1.3, a0 + MELEE_ARC * 1.3, 12, Color(1.0, 0.85, 0.4, t * 0.7), 3.0)
+			draw_arc(NINJA_ANCHOR, MELEE_RANGE * 0.55, a0 - MELEE_ARC * 1.3, a0 + MELEE_ARC * 1.3, 12, Color(1.0, 0.85, 0.4, t * 0.7), 3.0)
 	if state == State.SEALING:
 		var p := 1.0 - clampf(seal_timer / maxf(float(seal_cfg.get("seal_time", 0.45)), 0.01), 0.0, 1.0)
-		draw_arc(Vector2.ZERO, 34.0, -PI / 2.0, -PI / 2.0 + TAU * p, 24, Color(1.0, 0.6, 0.25, 0.9), 3.0)
+		draw_arc(NINJA_ANCHOR, 34.0, -PI / 2.0, -PI / 2.0 + TAU * p, 24, Color(1.0, 0.6, 0.25, 0.9), 3.0)
 	if state == State.AIM:
-		var local_mouse := mouse_world - global_position
-		draw_line(Vector2.ZERO, local_mouse, Color(1.0, 0.6, 0.25, 0.5), 1.0)
-		draw_arc(local_mouse, 14.0, 0.0, TAU, 20, Color(1.0, 0.6, 0.25, 0.9), 2.0)
+		draw_line(NINJA_ANCHOR, mouse_world - global_position, Color(1.0, 0.6, 0.25, 0.5), 1.0)
+		draw_arc(mouse_world - global_position, 14.0, 0.0, TAU, 20, Color(1.0, 0.6, 0.25, 0.9), 2.0)
 	if state == State.CHARGE:
 		var ratio := _charge_ratio()
 		var col2 := Color(0.5, 0.85, 1.0, 0.95)
 		if String(charge_cfg.get("category", "")) == "projectile":
 			col2 = Color(1.0, 0.6, 0.2, 0.95)
-		draw_arc(Vector2.ZERO, 38.0, -PI / 2.0, -PI / 2.0 + TAU * ratio, 26, col2, 4.0)
-		draw_arc(Vector2.ZERO, 30.0 + ratio * 10.0, 0.0, TAU * ratio, 22, Color(col2.r, col2.g, col2.b, 0.4), 1.5)
-		## 蓄力方向指示
+		draw_arc(NINJA_ANCHOR, 38.0, -PI / 2.0, -PI / 2.0 + TAU * ratio, 26, col2, 4.0)
+		draw_arc(NINJA_ANCHOR, 30.0 + ratio * 10.0, 0.0, TAU * ratio, 22, Color(col2.r, col2.g, col2.b, 0.4), 1.5)
 		var d := (mouse_world - global_position).normalized()
 		if d != Vector2.ZERO:
-			draw_line(Vector2.ZERO, d * (60.0 + 90.0 * ratio), Color(col2.r, col2.g, col2.b, 0.45), 2.0)
+			draw_line(NINJA_ANCHOR, NINJA_ANCHOR + d * (60.0 + 90.0 * ratio), Color(col2.r, col2.g, col2.b, 0.45), 2.0)
 	if state == State.GROUND:
 		var point_local := _ground_point() - global_position
 		var cat := String(ground_cfg.get("category", ""))
@@ -958,9 +986,9 @@ func _draw() -> void:
 			draw_line(point_local - perp2 * half, point_local + perp2 * half, Color(0.5, 0.42, 0.3, 0.5), 9.0)
 		draw_arc(point_local, 10.0, 0.0, TAU, 16, Color(1.0, 0.95, 0.7, 0.9), 2.0)
 	if state == State.CHANNEL:
-		draw_arc(Vector2.ZERO, 30.0, 0.0, TAU, 24, Color(0.4, 0.95, 0.6, 0.75), 2.5)
-		draw_rect(Rect2(-2, -22, 4, 12), Color(0.5, 1.0, 0.65, 0.9))
-		draw_rect(Rect2(-8, -16, 16, 4), Color(0.5, 1.0, 0.65, 0.9))
+		draw_arc(NINJA_ANCHOR, 30.0, 0.0, TAU, 24, Color(0.4, 0.95, 0.6, 0.75), 2.5)
+		draw_rect(Rect2(NINJA_ANCHOR.x - 2, NINJA_ANCHOR.y - 2, 4, 12), Color(0.5, 1.0, 0.65, 0.9))
+		draw_rect(Rect2(NINJA_ANCHOR.x - 8, NINJA_ANCHOR.y + 4, 16, 4), Color(0.5, 1.0, 0.65, 0.9))
 	if orb_active:
 		var op := _orb_pos() - global_position
 		var or_ := float(orb_cfg.get("orb_radius", 16.0))

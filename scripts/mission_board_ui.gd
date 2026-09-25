@@ -34,8 +34,7 @@ func _gui_input(event: InputEvent) -> void:
 		var ids := _mission_ids()
 		for i in ids.size():
 			if _row_rect(i).has_point(p):
-				game.close_board()
-				Flow.start_mission(ids[i])
+				game.accept_mission_from_board(ids[i])
 				return
 
 

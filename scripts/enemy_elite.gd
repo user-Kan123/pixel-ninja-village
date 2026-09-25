@@ -18,6 +18,17 @@ func _init() -> void:
 	body_color = Color("8f2f4f")
 	body_size = Vector2(52, 52)
 	xp_value = 60
+	pixel_size = 3.6
+	ninja_cfg = {
+		"hair": Color("3a3a44"), "hair_dark": Color("2a2a34"),
+		"skin": Color("d9a87e"), "skin_dark": Color("b8865e"),
+		"band": Color("24242c"), "plate": Color("9a9aa4"),
+		"outfit": Color("26262e"), "outfit_dark": Color("1a1a22"),
+		"trim": Color("4a4a56"), "belt": Color("181820"),
+		"pants": Color("22222a"), "pants_dark": Color("181820"),
+		"shoes": Color("14141a"),
+		"pattern": "cloud", "pattern_color": Color("c8383a"),
+	}
 
 
 func _tick(delta: float) -> void:

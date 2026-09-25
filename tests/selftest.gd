@@ -13,6 +13,23 @@ var failures: Array[String] = []
 var save_backup := ""
 
 
+## 绘制探针：PixelArt 的绘制调用只能在 CanvasItem._draw() 内执行，
+## 直接调用会刷 "Drawing is only allowed inside this node's _draw()" 并污染日志。
+## 用这个空节点承载绘制，既验证"三种 pattern 都不崩"，也不产生假报错。
+class DrawProbe extends Node2D:
+	var drew := false
+
+	func _draw() -> void:
+		drew = true
+		for pat in ["cloud", "armor", ""]:
+			var cfg: Dictionary = Player.NINJA_CFG.duplicate(true)
+			cfg["pattern"] = pat
+			cfg["flash_a"] = 1.0
+			PixelArt.draw_ninja(self, Vector2(60, 60), cfg, 0, 3.0)
+			PixelArt.draw_ninja(self, Vector2(140, 60), cfg, 1, 3.0)
+		PixelArt.draw_dummy(self, Vector2(220, 60), 0.5, 3.0)
+
+
 func _ready() -> void:
 	## 备份真实存档，测试结束后原样恢复（避免测试污染玩家进度）
 	if FileAccess.file_exists(Flow.SAVE_PATH):
@@ -46,6 +63,7 @@ func _ready() -> void:
 	await _test_mission_hunt()
 	await _test_mission_collect()
 	await _test_mission_survive()
+	await _test_wild_and_pending()
 	await _test_death()
 	_finish()
 
@@ -256,8 +274,8 @@ func _test_clone_combat() -> void:
 		_fail("没有影分身可供测试")
 		return
 	var clone: Node2D = clones[0]
-	player.global_position = game.ARENA_SIZE * 0.5
-	clone.global_position = game.ARENA_SIZE * 0.5 + Vector2(400.0, 0.0)
+	player.global_position = game.arena_size * 0.5
+	clone.global_position = game.arena_size * 0.5 + Vector2(400.0, 0.0)
 	var foe := _spawn(0, clone.global_position + Vector2(40.0, 0.0))
 	await _frames(240)
 	_check(foe.hp < foe.max_hp, "影分身未攻击敌人")
@@ -267,7 +285,7 @@ func _test_clone_combat() -> void:
 
 ## 敌人攻击：射手投掷 + 重型挥击 + 精英扇形投掷都能打到玩家
 func _test_enemy_attacks() -> void:
-	player.global_position = game.ARENA_SIZE * 0.5
+	player.global_position = game.arena_size * 0.5
 	player.dead = false
 	player.hp = player.max_hp
 	player.invuln_timer = 0.0
@@ -391,6 +409,57 @@ func _test_mission_survive() -> void:
 	Flow.mission_cfg = {}
 
 
+## 待出发机制 + 野外场景：看板接取登记 → 野外场景尺寸/横幅/目标指引/像素绘制/结算
+func _test_wild_and_pending() -> void:
+	_reset_flow()
+	Flow.accept_mission("hunt")
+	_check(Flow.pending_mission == "hunt", "看板接取未登记待出发任务")
+	Flow.pending_mission = ""
+	## 加载野外讨伐场景
+	await _load_wild("hunt")
+	Flow.mission_cfg["target_kills"] = 2
+	_check(game is WildField, "野外场景类型错误")
+	_check(game.arena_size == Vector2(2200, 1400), "野外尺寸异常：%s" % str(game.arena_size))
+	_check(game.mission_state == game.MissionState.RUNNING, "野外任务未开始")
+	_check(game.hud.banner_timer > 0.0, "任务开始横幅未显示")
+	## 目标指引：hunt 指向最近敌人
+	var t: Dictionary = game.nearest_target()
+	_check(bool(t.get("valid", false)), "nearest_target 未找到敌人")
+	## 像素绘制：三种 pattern + 木桩都不应崩（走真实 _draw 路径）
+	var probe := DrawProbe.new()
+	game.add_child(probe)
+	await _frames(3)
+	_check(probe.drew, "像素绘制未执行（探针 _draw 未被调用）")
+	probe.queue_free()
+	## 完成野外讨伐
+	for i in 2:
+		var e := _spawn(1, player.global_position + Vector2(40.0, 0.0))
+		await _frames(2)
+		e.take_damage(9999.0, Vector2.ZERO)
+		await _frames(3)
+	_check(game.mission_state == game.MissionState.WON, "野外讨伐未完成")
+	## 野外收集：目标指引应指向卷轴
+	await _load_wild("collect")
+	Flow.mission_cfg["scroll_count"] = 1
+	var t2: Dictionary = game.nearest_target()
+	_check(bool(t2.get("valid", false)), "collect nearest_target 未找到卷轴")
+	Flow.mission_id = ""
+	Flow.mission_cfg = {}
+
+
+func _load_wild(id: String) -> void:
+	if game != null:
+		game.queue_free()
+	await _frames(2)
+	Flow.mission_id = id
+	Flow.mission_cfg = Data.missions[id].duplicate(true)
+	var scene: PackedScene = load("res://scenes/wild.tscn")
+	game = scene.instantiate()
+	add_child(game)
+	await _frames(5)
+	player = game.player
+
+
 # ---------------------------------------------------------------- 收尾
 
 func _test_death() -> void:
@@ -457,6 +526,7 @@ func _reset_flow() -> void:
 	Flow.missions_done = {}
 	Flow.mission_id = ""
 	Flow.mission_cfg = {}
+	Flow.pending_mission = ""
 
 
 func _check(cond: bool, msg: String) -> void:

@@ -1,5 +1,8 @@
+class_name Battlefield
 extends Node2D
-## 战场：自由训练 或 任务模式（由 Flow.mission_id 决定）。
+## 战场基类：自由训练 或 任务模式（由 Flow.mission_id 决定）。
+## 子类（如野外 WildField）在 _init 覆写 arena_size / obstacles / gate_pos，
+## 并覆写 _draw_ground / _draw_border 即可换一个场景，战斗与任务逻辑全部复用。
 ##
 ## 任务三类（data/mission.json 定义）：
 ##   hunt     讨伐：持续补充敌人，杀满 target_kills 完成
@@ -7,17 +10,17 @@ extends Node2D
 ##   collect  收集：捡满情报卷轴完成，敌人周期性骚扰
 ##
 ## 完成 → 结算（赏金 + 经验 + 过一天）→ 按 E 回村；失败 → 按 E 回村（不删档）。
-## 训练模式保留 v0.2 行为，另有出口门，E 返回村庄。
 
-const ARENA_SIZE := Vector2(1840.0, 1220.0)
-const OBSTACLES: Array[Rect2] = [
-	Rect2(560, 380, 170, 60),
-	Rect2(1090, 760, 60, 200),
-	Rect2(860, 170, 210, 60),
-	Rect2(280, 900, 90, 90),
-	Rect2(1420, 400, 130, 60),
+var arena_size: Vector2 = Vector2(1840.0, 1220.0)
+## 障碍：{ "rect": Rect2, "kind": "crate" / "rock" / "tree" }
+var obstacles: Array = [
+	{"rect": Rect2(560, 380, 170, 60), "kind": "crate"},
+	{"rect": Rect2(1090, 760, 60, 200), "kind": "crate"},
+	{"rect": Rect2(860, 170, 210, 60), "kind": "crate"},
+	{"rect": Rect2(280, 900, 90, 90), "kind": "crate"},
+	{"rect": Rect2(1420, 400, 130, 60), "kind": "crate"},
 ]
-const GATE_POS := Vector2(920.0, 1140.0)
+var gate_pos: Vector2 = Vector2(920.0, 1140.0)
 
 enum MissionState { NONE, RUNNING, WON, LOST }
 
@@ -57,6 +60,8 @@ func _ready() -> void:
 		_spawn_enemies()
 	_spawn_hud()
 	_spawn_loadout_ui()
+	if Flow.in_mission():
+		_show_start_banner()
 
 
 func _make_container(n: String) -> Node2D:
@@ -69,10 +74,10 @@ func _make_container(n: String) -> Node2D:
 func _build_walls() -> void:
 	var t := 60.0
 	var rects := [
-		Rect2(-t, -t, ARENA_SIZE.x + 2.0 * t, t),
-		Rect2(-t, ARENA_SIZE.y, ARENA_SIZE.x + 2.0 * t, t),
-		Rect2(-t, 0.0, t, ARENA_SIZE.y),
-		Rect2(ARENA_SIZE.x, 0.0, t, ARENA_SIZE.y),
+		Rect2(-t, -t, arena_size.x + 2.0 * t, t),
+		Rect2(-t, arena_size.y, arena_size.x + 2.0 * t, t),
+		Rect2(-t, 0.0, t, arena_size.y),
+		Rect2(arena_size.x, 0.0, t, arena_size.y),
 	]
 	for r in rects:
 		var body := StaticBody2D.new()
@@ -88,7 +93,7 @@ func _build_walls() -> void:
 func _spawn_player() -> void:
 	player = Player.new()
 	player.game = self
-	player.position = ARENA_SIZE * 0.5
+	player.position = arena_size * 0.5
 	add_child(player)
 	Flow.apply_to_player(player)
 
@@ -142,6 +147,11 @@ func _setup_mission() -> void:
 			_spawn_scrolls()
 			for i in 2:
 				_spawn_mission_enemy()
+
+
+func _show_start_banner() -> void:
+	var mname: String = Data.s(String(Flow.mission_cfg.get("name_key", "")))
+	hud.show_banner(Data.s("banner.mission_start"), mname + "  ·  " + objective_text())
 
 
 func _process(delta: float) -> void:
@@ -219,11 +229,11 @@ func _spawn_mission_enemy() -> void:
 
 func _random_spawn_pos() -> Vector2:
 	var pos := Vector2(
-		rng.randf_range(140.0, ARENA_SIZE.x - 140.0),
-		rng.randf_range(140.0, ARENA_SIZE.y - 140.0)
+		rng.randf_range(140.0, arena_size.x - 140.0),
+		rng.randf_range(140.0, arena_size.y - 140.0)
 	)
 	if player != null and pos.distance_to(player.global_position) < 320.0:
-		pos = ARENA_SIZE - pos
+		pos = arena_size - pos
 	return pos
 
 
@@ -290,6 +300,30 @@ func objective_text() -> String:
 	return ""
 
 
+## 任务指引：返回当前最该去的目标（屏幕外箭头用）
+func nearest_target() -> Dictionary:
+	if player == null or mission_state != MissionState.RUNNING:
+		return {"valid": false, "pos": Vector2.ZERO}
+	var t := String(Flow.mission_cfg.get("type", ""))
+	var best := Vector2.ZERO
+	var best_d := INF
+	if t == "collect":
+		for p in get_tree().get_nodes_in_group("pickups"):
+			if p is Pickup and p.kind == "intel" and not p.collected:
+				var d: float = player.global_position.distance_to(p.global_position)
+				if d < best_d:
+					best_d = d
+					best = p.global_position
+	else:
+		for e in get_tree().get_nodes_in_group("enemies"):
+			if e is EnemyBase and not e.dead:
+				var d2: float = player.global_position.distance_to(e.global_position)
+				if d2 < best_d:
+					best_d = d2
+					best = e.global_position
+	return {"valid": best_d < INF, "pos": best}
+
+
 # ---------------------------------------------------------------- 装配界面暂停
 
 func toggle_loadout() -> void:
@@ -316,7 +350,7 @@ func current_interact_hint() -> String:
 	if mission_state == MissionState.WON or mission_state == MissionState.LOST:
 		return Data.s("mission.back")
 	if not Flow.in_mission() and player != null and not player.dead:
-		if player.global_position.distance_to(GATE_POS) < 90.0:
+		if player.global_position.distance_to(gate_pos) < 90.0:
 			return Data.s("mission.back")
 	return ""
 
@@ -327,7 +361,7 @@ func on_interact() -> void:
 		Flow.back_to_village()
 		return
 	if not Flow.in_mission() and player != null and not player.dead:
-		if player.global_position.distance_to(GATE_POS) < 90.0:
+		if player.global_position.distance_to(gate_pos) < 90.0:
 			Flow.sync_from_player(player)
 			Flow.back_to_village()
 
@@ -446,15 +480,15 @@ func restart() -> void:
 
 func clamp_to_arena(pos: Vector2, margin := 24.0) -> Vector2:
 	return Vector2(
-		clampf(pos.x, margin, ARENA_SIZE.x - margin),
-		clampf(pos.y, margin, ARENA_SIZE.y - margin)
+		clampf(pos.x, margin, arena_size.x - margin),
+		clampf(pos.y, margin, arena_size.y - margin)
 	)
 
 
 ## 静态障碍 + 已放置的墙体，任一命中即视为阻挡
 func pos_blocked(pos: Vector2) -> bool:
-	for r: Rect2 in OBSTACLES:
-		if r.grow(6.0).has_point(pos):
+	for o in obstacles:
+		if (o["rect"] as Rect2).grow(6.0).has_point(pos):
 			return true
 	for wr in wall_rects():
 		if wr.grow(4.0).has_point(pos):
@@ -463,7 +497,8 @@ func pos_blocked(pos: Vector2) -> bool:
 
 
 func resolve_static(pos: Vector2) -> Vector2:
-	for r: Rect2 in OBSTACLES:
+	for o in obstacles:
+		var r: Rect2 = o["rect"]
 		if r.grow(4.0).has_point(pos):
 			pos = _push_out_of_rect(pos, r)
 	return clamp_to_arena(pos, 26.0)
@@ -499,29 +534,70 @@ func _push_out_of_rect(pos: Vector2, r: Rect2) -> Vector2:
 	return pos
 
 
+# ---------------------------------------------------------------- 绘制
+
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, ARENA_SIZE), Color("31302b"))
+	_draw_ground()
+	_draw_obstacles()
+	_draw_border()
+	if not Flow.in_mission():
+		_draw_return_gate()
+
+
+## 地面（训练：泥地 + 网格 + 中央圆）；野外覆写
+func _draw_ground() -> void:
+	draw_rect(Rect2(Vector2.ZERO, arena_size), Color("31302b"))
 	var grid := Color(0.24, 0.23, 0.2)
 	var step := 92.0
 	var x := step
-	while x < ARENA_SIZE.x:
-		draw_line(Vector2(x, 0), Vector2(x, ARENA_SIZE.y), grid, 1.0)
+	while x < arena_size.x:
+		draw_line(Vector2(x, 0), Vector2(x, arena_size.y), grid, 1.0)
 		x += step
 	var y := step
-	while y < ARENA_SIZE.y:
-		draw_line(Vector2(0, y), Vector2(ARENA_SIZE.x, y), grid, 1.0)
+	while y < arena_size.y:
+		draw_line(Vector2(0, y), Vector2(arena_size.x, y), grid, 1.0)
 		y += step
-	draw_arc(ARENA_SIZE * 0.5, 130.0, 0.0, TAU, 48, Color(0.2, 0.19, 0.17), 2.0)
-	for r: Rect2 in OBSTACLES:
-		draw_rect(r.grow(3.0), Color("4a3f33"))
-		draw_rect(r, Color("57493a"))
+	draw_arc(arena_size * 0.5, 130.0, 0.0, TAU, 48, Color(0.2, 0.19, 0.17), 2.0)
+
+
+func _draw_obstacles() -> void:
+	for o in obstacles:
+		var r: Rect2 = o["rect"]
+		match String(o["kind"]):
+			"rock":
+				draw_rect(r.grow(3.0), Color("55565c"))
+				draw_rect(r, Color("6e6f76"))
+				draw_rect(Rect2(r.position + r.size * 0.25, r.size * 0.4), Color("83848c"))
+			"tree":
+				_draw_tree(r)
+			_:
+				draw_rect(r.grow(3.0), Color("4a3f33"))
+				draw_rect(r, Color("57493a"))
+				draw_line(r.position, r.end, Color("3c3328"), 2.0)
+				draw_line(Vector2(r.end.x, r.position.y), Vector2(r.position.x, r.end.y), Color("3c3328"), 2.0)
+
+
+## 一棵树：rect 是树干碰撞，树冠画在其上方
+func _draw_tree(r: Rect2) -> void:
+	var cx := r.get_center()
+	draw_rect(r, Color("5a4230"))
+	var top := Vector2(cx.x, r.position.y)
+	for d in [Vector2(0, -34), Vector2(-26, -20), Vector2(26, -20), Vector2(-14, -40), Vector2(14, -40)]:
+		draw_circle(top + d, 24.0, Color("2f5230"))
+	draw_circle(top + Vector2(-8, -30), 14.0, Color("3d6638"))
+
+
+## 边界框（训练：木桩围栏）；野外覆写为树墙
+func _draw_border() -> void:
 	draw_rect(
-		Rect2(-6.0, -6.0, ARENA_SIZE.x + 12.0, ARENA_SIZE.y + 12.0),
+		Rect2(-6.0, -6.0, arena_size.x + 12.0, arena_size.y + 12.0),
 		Color("221f1a"), false, 12.0
 	)
-	## 训练模式的出口（回村的鸟居）
-	if not Flow.in_mission():
-		draw_rect(Rect2(GATE_POS + Vector2(-36, -56), Vector2(9, 56)), Color("a03428"))
-		draw_rect(Rect2(GATE_POS + Vector2(27, -56), Vector2(9, 56)), Color("a03428"))
-		draw_rect(Rect2(GATE_POS + Vector2(-44, -64), Vector2(88, 11)), Color("b8402f"))
-		draw_rect(Rect2(GATE_POS + Vector2(-30, -44), Vector2(60, 7)), Color("a03428"))
+
+
+## 训练回村门（鸟居）
+func _draw_return_gate() -> void:
+	draw_rect(Rect2(gate_pos + Vector2(-36, -56), Vector2(9, 56)), Color("a03428"))
+	draw_rect(Rect2(gate_pos + Vector2(27, -56), Vector2(9, 56)), Color("a03428"))
+	draw_rect(Rect2(gate_pos + Vector2(-44, -64), Vector2(88, 11)), Color("b8402f"))
+	draw_rect(Rect2(gate_pos + Vector2(-30, -44), Vector2(60, 7)), Color("a03428"))

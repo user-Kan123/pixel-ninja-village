@@ -84,7 +84,7 @@ func _check_player_hit() -> void:
 
 
 func _out_of_arena() -> bool:
-	var s: Vector2 = game.ARENA_SIZE
+	var s: Vector2 = game.arena_size
 	return position.x < 0.0 or position.y < 0.0 or position.x > s.x or position.y > s.y
 
 

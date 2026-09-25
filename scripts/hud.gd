@@ -8,6 +8,12 @@ var player: Player
 var notice_text := ""
 var notice_timer := 0.0
 
+## 任务开始大横幅
+var banner_title := ""
+var banner_sub := ""
+var banner_timer := 0.0
+const BANNER_TIME := 3.2
+
 const COL_HP := Color("58c258")
 const COL_CHAKRA := Color("3f9fe0")
 const COL_XP := Color("e0c447")
@@ -25,8 +31,15 @@ func show_notice(text: String) -> void:
 	notice_timer = 2.4
 
 
+func show_banner(title: String, sub: String) -> void:
+	banner_title = title
+	banner_sub = sub
+	banner_timer = BANNER_TIME
+
+
 func _process(delta: float) -> void:
 	notice_timer = maxf(notice_timer - delta, 0.0)
+	banner_timer = maxf(banner_timer - delta, 0.0)
 	queue_redraw()
 
 
@@ -39,6 +52,9 @@ func _draw() -> void:
 	_draw_counters(font)
 	_draw_state_hints(font)
 	_draw_notice(font)
+	_draw_banner(font)
+	if game.mission_state == game.MissionState.RUNNING:
+		_draw_target_arrow()
 	_draw_mission_result(font)
 	if player.dead and not Flow.in_mission():
 		_draw_death(font)
@@ -165,6 +181,48 @@ func _draw_notice(font: Font) -> void:
 	var size_v := get_viewport_rect().size
 	var a: float = clampf(notice_timer / 2.4, 0.0, 1.0)
 	draw_string(font, Vector2(size_v.x / 2.0 - 90.0, 120.0), notice_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color(1.0, 0.92, 0.45, 0.35 + 0.65 * a))
+
+
+func _draw_banner(font: Font) -> void:
+	if banner_timer <= 0.0:
+		return
+	var size_v := get_viewport_rect().size
+	## 前 0.4s 淡入，最后 0.6s 淡出
+	var a := 1.0
+	if banner_timer > BANNER_TIME - 0.4:
+		a = (BANNER_TIME - banner_timer) / 0.4
+	elif banner_timer < 0.6:
+		a = banner_timer / 0.6
+	var cy := size_v.y * 0.32
+	draw_rect(Rect2(0, cy - 46, size_v.x, 92), Color(0.05, 0.05, 0.07, 0.72 * a))
+	draw_rect(Rect2(0, cy - 46, size_v.x, 3), Color(0.9, 0.75, 0.35, a))
+	draw_rect(Rect2(0, cy + 43, size_v.x, 3), Color(0.9, 0.75, 0.35, a))
+	draw_string(font, Vector2(0, cy - 4), banner_title, HORIZONTAL_ALIGNMENT_CENTER, size_v.x, 34, Color(1.0, 0.9, 0.55, a))
+	draw_string(font, Vector2(0, cy + 28), banner_sub, HORIZONTAL_ALIGNMENT_CENTER, size_v.x, 18, Color(0.85, 0.85, 0.9, a))
+
+
+## 屏幕外目标指引：目标不在视野内时，在屏幕边缘画一个指向它的箭头
+func _draw_target_arrow() -> void:
+	var cam := get_viewport().get_camera_2d()
+	if cam == null:
+		return
+	var t: Dictionary = game.nearest_target()
+	if not bool(t.get("valid", false)):
+		return
+	var size_v := get_viewport_rect().size
+	var sp: Vector2 = cam.get_canvas_transform() * (t["pos"] as Vector2)
+	var m := 64.0
+	if sp.x > m and sp.x < size_v.x - m and sp.y > m and sp.y < size_v.y - m:
+		return
+	var edge := Vector2(clampf(sp.x, m, size_v.x - m), clampf(sp.y, m, size_v.y - m))
+	var dir := (sp - size_v * 0.5).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.DOWN
+	var perp := Vector2(-dir.y, dir.x)
+	var col := Color(1.0, 0.88, 0.4, 0.95)
+	draw_colored_polygon(PackedVector2Array([
+		edge + dir * 18.0, edge - dir * 12.0 + perp * 11.0, edge - dir * 12.0 - perp * 11.0]), col)
+	draw_arc(edge, 24.0, 0.0, TAU, 24, Color(1.0, 0.88, 0.4, 0.4), 2.0)
 
 
 func _draw_death(font: Font) -> void:

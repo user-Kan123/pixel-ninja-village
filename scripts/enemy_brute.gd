@@ -32,6 +32,17 @@ func _init() -> void:
 	body_color = Color("6b3f8f")
 	body_size = Vector2(46, 46)
 	xp_value = 30
+	pixel_size = 3.8
+	ninja_cfg = {
+		"hair": Color("4a3258"), "hair_dark": Color("382644"),
+		"skin": Color("c89870"), "skin_dark": Color("a87854"),
+		"band": Color("2e2438"), "plate": Color("9a9aa4"),
+		"outfit": Color("6b3f8f"), "outfit_dark": Color("522f70"),
+		"trim": Color("8a6aa8"), "belt": Color("2a2034"),
+		"pants": Color("3e2e52"), "pants_dark": Color("2e2240"),
+		"shoes": Color("221a2c"),
+		"pattern": "armor", "armor_line": Color("a898d0"),
+	}
 
 
 func stagger_resistance() -> float:

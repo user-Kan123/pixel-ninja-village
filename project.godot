@@ -7,7 +7,7 @@ config/name="Pixel Ninja Village"
 config/description="火影题材像素沙盒 RPG —— 免费同人开源作品（垂直切片）"
 run/main_scene="res://scenes/village.tscn"
 config/features=PackedStringArray("4.4")
-config/version="0.3.0"
+config/version="0.4.0"
 
 [autoload]
 

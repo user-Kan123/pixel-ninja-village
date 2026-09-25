@@ -28,6 +28,15 @@ func _init() -> void:
 	body_color = Color("b8792f")
 	body_size = Vector2(28, 28)
 	xp_value = 16
+	ninja_cfg = {
+		"hair": Color("8a8a95"), "hair_dark": Color("6a6a75"),
+		"skin": Color("d9a87e"), "skin_dark": Color("b8865e"),
+		"band": Color("3a3328"), "plate": Color("a8a8b0"),
+		"outfit": Color("a8793f"), "outfit_dark": Color("865f30"),
+		"trim": Color("c8a86a"), "belt": Color("4a3826"),
+		"pants": Color("6a5238"), "pants_dark": Color("52402c"),
+		"shoes": Color("2e2620"),
+	}
 
 
 func take_damage(amount: float, knockback: Vector2) -> void:
