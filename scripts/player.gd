@@ -165,6 +165,10 @@ func _ready() -> void:
 # ---------------------------------------------------------------- 成长
 
 func slots_unlocked() -> int:
+	## 测试模式（Flow.test_unlock_all，游戏内按 F1 切换）：无视等级，5 个槽全开。
+	## 忍术本身从来没有等级门槛，唯一的锁就是这里的槽位数，所以这一行就是"全解锁"的全部。
+	if Flow.test_unlock_all:
+		return SLOT_UNLOCK_LEVELS.size()
 	var n := 0
 	for lv in SLOT_UNLOCK_LEVELS:
 		if level >= int(lv):
@@ -213,6 +217,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_TAB and event.pressed:
 			game.toggle_loadout()
 			return
+		if event.keycode == KEY_F1 and event.pressed:
+			## 测试模式开关：全忍术 / 5 个忍术槽全解锁（装配界面打开时由 LoadoutUi 接管，那边游戏暂停）
+			Flow.toggle_test_mode()
+			notify_test_mode()
+			return
 		if event.keycode == KEY_R and event.pressed:
 			game.restart()
 			return
@@ -225,6 +234,18 @@ func _unhandled_input(event: InputEvent) -> void:
 				_on_slot_pressed(idx)
 			else:
 				_on_slot_released(idx)
+
+
+## 测试模式切换后的反馈：HUD 通知行 + 装配界面重绘。
+## 单独抽出来是为了让 LoadoutUi（界面打开时游戏暂停，走不到 player._unhandled_input）复用同一套反馈。
+func notify_test_mode() -> void:
+	if game == null:
+		return
+	if game.hud != null:
+		var key := "hud.test_on_notice" if Flow.test_unlock_all else "hud.test_off_notice"
+		game.hud.show_notice(Data.s(key))
+	if game.loadout_ui != null:
+		game.loadout_ui.queue_redraw()
 
 
 func _on_left_click() -> void:
@@ -257,6 +278,7 @@ func _on_slot_pressed(idx: int) -> void:
 	if dead or idx < 0 or idx >= jutsu_slots.size():
 		return
 	if idx >= slots_unlocked():
+		## 未解锁的槽按键无反应。测试模式下 slots_unlocked() 恒为 5，所以 1-5 全部可用。
 		return
 	if state == State.CHARGE:
 		## 蓄力中再次按同键：直接释放

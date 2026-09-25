@@ -47,6 +47,7 @@ func _ready() -> void:
 	_bind_player()
 	_check(Data.jutsu_list.size() == 15, "忍术表数量不是 15：%d" % Data.jutsu_list.size())
 	_check(Data.missions.size() == 3, "任务表数量不是 3：%d" % Data.missions.size())
+	_check(player.slots_unlocked() == 5, "测试模式下 1 级应解锁 5 个忍术槽：%d" % player.slots_unlocked())
 	_clear_enemies()
 	await _frames(2)
 
@@ -59,6 +60,7 @@ func _ready() -> void:
 	await _test_clone_combat()
 	await _test_enemy_attacks()
 	await _test_growth()
+	await _test_test_mode()
 	_test_loadout()
 	_test_mouse_move()
 	_test_flow_save()
@@ -302,21 +304,82 @@ func _test_enemy_attacks() -> void:
 
 
 ## 成长：经验、升级、槽位解锁
+## 注意：这里必须关掉测试模式，否则 slots_unlocked() 恒为 5，"按等级解锁"这条逻辑就测不到了。
 func _test_growth() -> void:
+	Flow.test_unlock_all = false
 	player.dead = false
 	player.hp = player.max_hp
+	player.level = 1
+	player.xp = 0
+	player.xp_next = 40
+	_check(player.slots_unlocked() == 3, "1 级应有 3 个忍术槽，实际 %d" % player.slots_unlocked())
 	var lv0: int = player.level
 	var hp0: float = player.max_hp
 	player.gain_xp(200)
 	await _frames(4)
 	_check(player.level > lv0, "经验未推动升级")
 	_check(player.max_hp > hp0, "升级未提升体力上限")
-	_check(player.slots_unlocked() >= 3, "至少应有 3 个忍术槽")
 	player.gain_xp(1000000)
 	await _frames(6)
 	_check(player.level == Player.MAX_LEVEL, "等级未到达上限 %d，实际 %d" % [Player.MAX_LEVEL, player.level])
 	_check(player.slots_unlocked() == 5, "满级应解锁 5 个忍术槽，实际 %d" % player.slots_unlocked())
+	## 钉住 SLOT_UNLOCK_LEVELS 这张表：6 级 4 槽、12 级 5 槽
+	player.level = 6
+	_check(player.slots_unlocked() == 4, "6 级应解锁 4 个忍术槽，实际 %d" % player.slots_unlocked())
+	player.level = 12
+	_check(player.slots_unlocked() == 5, "12 级应解锁 5 个忍术槽，实际 %d" % player.slots_unlocked())
 	_check(Data.s(player.rank_key()) != player.rank_key(), "满级段位名词缺失")
+	Flow.test_unlock_all = true
+
+
+## 测试模式：无视等级，15 个忍术全部可用 + 5 个忍术槽全解锁。
+## 覆盖三件事：开关真的进了槽位门槛、5 个槽都能按键进入施法、关掉后门槛立刻回来。
+func _test_test_mode() -> void:
+	Flow.test_unlock_all = true
+	Flow.level = 1
+	Flow.apply_to_player(player)
+	player.dead = false
+	player.level = 1
+	_check(player.slots_unlocked() == 5, "测试模式下 1 级未解锁 5 个槽：%d" % player.slots_unlocked())
+	_check(player.jutsu_slots.size() == 5, "忍术槽数量不是 5：%d" % player.jutsu_slots.size())
+	## 5 个槽各装一个不同施法管线的忍术（瞬时 / 结印瞄准 / 蓄力 / 坐标选择 / 引导）
+	var probes := ["blink", "fireball", "great_fireball", "earth_wall", "medical_palm"]
+	for i in probes.size():
+		player.jutsu_slots[i] = probes[i]
+		_check(not Data.jutsu.get(probes[i], {}).is_empty(), "探针忍术缺失：" + probes[i])
+	for i in 5:
+		_abort_cast()
+		player.chakra = 9999.0
+		player.jutsu_cd[probes[i]] = 0.0
+		player._on_slot_pressed(i)
+		await _frames(2)
+		var acted: bool = player.state != Player.State.MOVE or float(player.jutsu_cd.get(probes[i], 0.0)) > 0.0
+		_check(acted, "测试模式下第 %d 槽（%s）按键无反应" % [i + 1, probes[i]])
+	_abort_cast()
+	## 关掉开关：门槛立刻回来，未解锁的第 5 槽按键无反应
+	Flow.test_unlock_all = false
+	player.level = 1
+	_check(player.slots_unlocked() == 3, "关闭测试模式后 1 级应为 3 个槽：%d" % player.slots_unlocked())
+	player.chakra = 9999.0
+	player.jutsu_cd["medical_palm"] = 0.0
+	player._on_slot_pressed(4)
+	await _frames(2)
+	_check(player.state == Player.State.MOVE, "关闭测试模式后未解锁的第 5 槽仍能施法")
+	_abort_cast()
+	## F1 真实按键切换（走 player._unhandled_input）
+	_push_key(KEY_F1)
+	await _frames(2)
+	_check(Flow.test_unlock_all, "F1 未开启测试模式")
+	_push_key(KEY_F1)
+	await _frames(2)
+	_check(not Flow.test_unlock_all, "F1 未关闭测试模式")
+	_push_key(KEY_F1)
+	await _frames(2)
+	_check(Flow.test_unlock_all, "F1 未重新开启测试模式")
+	## 收尾：恢复默认装配，别把探针忍术留给后面的用例
+	for i in Player.DEFAULT_LOADOUT.size():
+		player.jutsu_slots[i] = Player.DEFAULT_LOADOUT[i]
+	_abort_cast()
 
 
 func _test_loadout() -> void:
@@ -576,6 +639,34 @@ func _push_click(pos: Vector2) -> void:
 	e.position = pos
 	e.global_position = pos
 	get_viewport().push_input(e, true)
+
+
+## 真实按键派发：走 _input → GUI → _unhandled_input 全链路（直接调函数测不出按键没接上的问题）
+func _push_key(code: int) -> void:
+	var e := InputEventKey.new()
+	e.keycode = code
+	e.physical_keycode = code
+	e.pressed = true
+	get_viewport().push_input(e)
+
+
+## 强制中断玩家当前施法并清干净所有施法状态（测试里换用例时用，避免上一段状态粘到下一段）
+func _abort_cast() -> void:
+	player.state = Player.State.MOVE
+	player.seal_cfg = {}
+	player.seal_id = ""
+	player.seal_slot = -1
+	player.charge_cfg = {}
+	player.charge_id = ""
+	player.charge_slot = -1
+	player.ground_cfg = {}
+	player.ground_id = ""
+	player.ground_slot = -1
+	player.channel_cfg = {}
+	player.channel_id = ""
+	player.channel_slot = -1
+	player.orb_active = false
+	player.orb_cfg = {}
 
 
 # ---------------------------------------------------------------- 工具

@@ -20,6 +20,18 @@ var mission_cfg: Dictionary = {}
 ## 已在看板接取、但还没从村口大门出发的任务
 var pending_mission := ""
 
+## ---------------------------------------------------------------- 测试模式
+## 打开后无视等级限制，5 个忍术槽全部可用（忍术本身没有等级门槛，从来都是 15 个全开）。
+## 游戏内按 F1 随时切换；两套 HUD 左下角会显示当前状态。
+## ⚠️ 正式发布前把这里改成 false，或删掉这个开关与 player.slots_unlocked() 里的分支。
+var test_unlock_all := true
+
+
+## 切换测试模式，返回切换后的状态（默认开 → 按一次变正式进度，再按回来）。
+func toggle_test_mode() -> bool:
+	test_unlock_all = not test_unlock_all
+	return test_unlock_all
+
 
 func _ready() -> void:
 	for id in DEFAULT_LOADOUT:

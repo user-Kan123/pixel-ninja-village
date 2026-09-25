@@ -51,6 +51,7 @@ func _draw() -> void:
 	_draw_jutsu_slots(font)
 	_draw_counters(font)
 	_draw_state_hints(font)
+	_draw_test_badge(font)
 	_draw_notice(font)
 	_draw_banner(font)
 	if game.mission_state == game.MissionState.RUNNING:
@@ -175,6 +176,17 @@ func _draw_state_hints(font: Font) -> void:
 		draw_rect(r, Color(0.9, 0.75, 0.4, 0.9), false, 1.5)
 		draw_string(font, r.position + Vector2(12.0, 25.0), ihint, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("f5e9c8"))
 	draw_string(font, Vector2(0.0, size_v.y - 18.0), Data.s("hud.controls"), HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 12, Color(1, 1, 1, 0.45))
+
+
+## 测试模式角标：左下角（槽位行上方那一带，不与槽位名重叠）
+func _draw_test_badge(font: Font) -> void:
+	var size_v := get_viewport_rect().size
+	if Flow.test_unlock_all:
+		draw_string(font, Vector2(24.0, size_v.y - 130.0), Data.s("hud.test_on"),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.62, 0.3))
+	else:
+		draw_string(font, Vector2(24.0, size_v.y - 130.0), Data.s("hud.test_off"),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.4))
 
 
 func _draw_notice(font: Font) -> void:

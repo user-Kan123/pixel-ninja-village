@@ -51,6 +51,11 @@ func _draw() -> void:
 		draw_string(font, r.position + Vector2(12.0, 26.0), hint, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("f5e9c8"))
 	## 底部操作提示
 	draw_string(font, Vector2(0.0, v.y - 18.0), Data.s("village.hint"), HORIZONTAL_ALIGNMENT_RIGHT, v.x - 24.0, 12, Color(1, 1, 1, 0.45))
+	## 测试模式角标（与战斗 HUD 同一位置：左下角）
+	if Flow.test_unlock_all:
+		draw_string(font, Vector2(24.0, v.y - 130.0), Data.s("hud.test_on"), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1.0, 0.62, 0.3))
+	else:
+		draw_string(font, Vector2(24.0, v.y - 130.0), Data.s("hud.test_off"), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.4))
 	## 通知
 	if notice_timer > 0.0:
 		var a: float = clampf(notice_timer / 2.4, 0.0, 1.0)

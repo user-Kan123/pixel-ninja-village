@@ -38,6 +38,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_TAB, KEY_ESCAPE:
 				game.close_loadout()
+			KEY_F1:
+				## 装配界面打开时游戏暂停，player._unhandled_input 走不到，这里单独接管
+				Flow.toggle_test_mode()
+				player.notify_test_mode()
+				queue_redraw()
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5:
 				selected_slot = int(event.keycode) - int(KEY_1)
 				queue_redraw()
@@ -121,6 +126,10 @@ func _draw() -> void:
 	draw_rect(p, Color(0.85, 0.72, 0.4), false, 2.0)
 	draw_string(font, Vector2(p.position.x + 26.0, p.position.y + 46.0), Data.s("loadout.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
 	draw_string(font, Vector2(p.position.x + 240.0, p.position.y + 46.0), "Lv.%d %s" % [player.level, Data.s(player.rank_key())], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("e0c447"))
+	## 测试模式提示：右对齐，x 给面板左边、width 给到右边界
+	if Flow.test_unlock_all:
+		draw_string(font, Vector2(p.position.x, p.position.y + 68.0), Data.s("loadout.test_on"),
+			HORIZONTAL_ALIGNMENT_RIGHT, PANEL_W - 26.0, 13, Color(1.0, 0.62, 0.3))
 	_draw_slots(font)
 	_draw_grid(font)
 	draw_string(font, Vector2(p.position.x + 26.0, p.end.y - 20.0), Data.s("loadout.hint"), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("b8b2a4"))
