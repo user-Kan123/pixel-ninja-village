@@ -21,6 +21,12 @@ const CHAKRA_REGEN := 9.0
 const KUNAI_MAX := 8
 const KUNAI_RECHARGE := 4.0
 
+## 鼠标跟随移动（主操作方式）
+const MOUSE_DEAD_ZONE := 24.0   ## 鼠标离人物多近算"站住"（贴到身上即停）
+const MOUSE_SLOW_BAND := 60.0   ## 死区外这一段距离内线性加速到全速
+const MOUSE_MIN_SPEED := 0.35   ## 刚出死区时的最低速度比例，避免龟速蹭
+const CAST_MOVE_MULT := 0.3     ## 施法期间（结印/瞄准/蓄力/选坐标/引导）移动速度比例
+
 const MAX_LEVEL := 20
 ## 5 个忍术槽各自的解锁等级（前三个 1 级即可用）
 const SLOT_UNLOCK_LEVELS := [1, 1, 1, 6, 12]
@@ -122,6 +128,12 @@ var slash_dir := Vector2.RIGHT
 var slash_heavy := false
 var dead := false
 var mouse_world := Vector2.ZERO
+## 当前朝向（鼠标压在人物身上不动时会保持上一次朝向，避免指示三角疯狂翻转）
+var face_dir := Vector2.RIGHT
+## 让鼠标"粘"在玩家身上（等价于鼠标压在人物身上 → 站住）。
+## 无头自检必须开：headless 下 get_global_mouse_position() 固定在屏幕原点，
+## 不粘住的话玩家会一路朝地图左上角狂奔，站位类断言全部失效。也可当调试开关用。
+var mouse_sticky := false
 
 ## 走路动画
 var walk_frame := 0
@@ -273,8 +285,16 @@ func _on_slot_released(idx: int) -> void:
 		_end_channel()
 
 
+## 移动输入：返回方向向量（长度 0~1）。
+## 主操作是**鼠标跟随**：人物朝鼠标方向走，越靠近鼠标越慢，鼠标贴到身上（≤ MOUSE_DEAD_ZONE）即站住。
+## WASD 仍然有效，与鼠标方向叠加，用于微调走位。
 func _move_input() -> Vector2:
 	var v := Vector2.ZERO
+	var to_mouse := mouse_world - global_position
+	var d := to_mouse.length()
+	if d > MOUSE_DEAD_ZONE:
+		var w := clampf((d - MOUSE_DEAD_ZONE) / MOUSE_SLOW_BAND, MOUSE_MIN_SPEED, 1.0)
+		v = to_mouse / d * w
 	if Input.is_physical_key_pressed(KEY_W):
 		v.y -= 1.0
 	if Input.is_physical_key_pressed(KEY_S):
@@ -286,10 +306,20 @@ func _move_input() -> Vector2:
 	return v.limit_length(1.0)
 
 
+## 朝向更新：鼠标离得够远才转向；压在人物身上（站住时）保持上一次朝向，
+## 否则指示三角会在鼠标压住人物的一瞬间跳到默认方向、疯狂翻转。
+func _update_face() -> void:
+	var to_mouse := mouse_world - global_position
+	if to_mouse.length() > MOUSE_DEAD_ZONE * 0.5:
+		face_dir = to_mouse.normalized()
+
+
 # ---------------------------------------------------------------- 主循环
 
 func _physics_process(delta: float) -> void:
-	mouse_world = get_global_mouse_position()
+	## 鼠标跟随：粘住时鼠标恒等于人物位置 → _move_input() 恒为 0 → 站住
+	mouse_world = global_position if mouse_sticky else get_global_mouse_position()
+	_update_face()
 	for id in jutsu_cd:
 		jutsu_cd[id] = maxf(float(jutsu_cd[id]) - delta, 0.0)
 	if not dead:
@@ -320,16 +350,9 @@ func _physics_process(delta: float) -> void:
 				desired = attack_dir * float(attack_step.get("lunge", 0.0))
 			else:
 				desired = _move_input() * MOVE_SPEED * 0.45
-		State.SEALING:
-			desired = _move_input() * MOVE_SPEED * 0.35
-		State.AIM:
-			desired = _move_input() * MOVE_SPEED * 0.7
-		State.CHARGE:
-			desired = _move_input() * MOVE_SPEED * 0.3
-		State.GROUND:
-			desired = _move_input() * MOVE_SPEED * 0.5
-		State.CHANNEL:
-			desired = _move_input() * MOVE_SPEED * 0.2
+		State.SEALING, State.AIM, State.CHARGE, State.GROUND, State.CHANNEL:
+			## 施法期间统一降到三成：鼠标追随时，瞄准远处目标不会被自己带着狂奔
+			desired = _move_input() * MOVE_SPEED * CAST_MOVE_MULT
 		State.DEAD:
 			pass
 	velocity = desired + knockback_velocity
@@ -356,7 +379,8 @@ func _physics_process(delta: float) -> void:
 
 
 func _update_walk(delta: float) -> void:
-	if not dead and state == State.MOVE and velocity.length() > 40.0:
+	## 只要在动就迈腿（施法期间的三成速度移动、攻击前冲也算），站住则归位第一帧
+	if not dead and velocity.length() > 40.0:
 		walk_anim_t += delta
 		if walk_anim_t >= 0.13:
 			walk_anim_t = 0.0
@@ -934,10 +958,8 @@ func _draw() -> void:
 	if invuln_timer > 0.0:
 		cfg["alpha"] = 0.5
 	PixelArt.draw_ninja(self, NINJA_ANCHOR, cfg, walk_frame, 3.0)
-	## 朝向指示（小三角）
-	var aim := (mouse_world - global_position).normalized()
-	if aim == Vector2.ZERO:
-		aim = Vector2.RIGHT
+	## 朝向指示（小三角）：用 face_dir，鼠标压在人物身上站住时保持上一次朝向
+	var aim := face_dir
 	var perp := Vector2(-aim.y, aim.x)
 	draw_colored_polygon(PackedVector2Array([
 		aim * 24.0 + perp * 4.0, aim * 31.0, aim * 24.0 - perp * 4.0,

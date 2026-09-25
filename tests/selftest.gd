@@ -44,6 +44,7 @@ func _ready() -> void:
 		_fail("主场景未生成玩家")
 		_finish()
 		return
+	_bind_player()
 	_check(Data.jutsu_list.size() == 15, "忍术表数量不是 15：%d" % Data.jutsu_list.size())
 	_check(Data.missions.size() == 3, "任务表数量不是 3：%d" % Data.missions.size())
 	_clear_enemies()
@@ -59,6 +60,7 @@ func _ready() -> void:
 	await _test_enemy_attacks()
 	await _test_growth()
 	_test_loadout()
+	_test_mouse_move()
 	_test_flow_save()
 	await _test_mission_hunt()
 	await _test_mission_collect()
@@ -175,14 +177,12 @@ func _test_rasengan() -> void:
 	player._try_cast_jutsu("rasengan", 0)
 	await _frames(3)
 	_check(player.orb_active, "螺旋丸未生成丸子")
-	var dummy := _spawn(0, player.global_position + Vector2(40.0, 0.0))
+	## 假人先放在远处：丸子挂在玩家身上 24 像素处，放太近会在采样基准血量前就被引爆
+	var dummy := _spawn(0, player.global_position + Vector2(400.0, 0.0))
 	await _frames(2)
 	var hp_before: float = dummy.hp
-	## headless 里鼠标固定在屏幕原点：把假人放到丸子实际所在的位置
-	var mpos: Vector2 = player.get_global_mouse_position()
-	var to_m: Vector2 = mpos - player.global_position
-	var dir: Vector2 = to_m.normalized() if to_m.length() > 1.0 else Vector2.RIGHT
-	dummy.global_position = player.global_position + dir * 26.0
+	## 把假人搬到丸子实际所在位置（_orb_pos() 就是游戏放置丸子用的同一个函数）
+	dummy.global_position = player._orb_pos()
 	await _frames(10)
 	_check(not player.orb_active, "螺旋丸接触后未引爆")
 	_check(dummy.hp < hp_before or dummy.dead, "螺旋丸未造成伤害")
@@ -458,9 +458,52 @@ func _load_wild(id: String) -> void:
 	add_child(game)
 	await _frames(5)
 	player = game.player
+	_bind_player()
 
 
 # ---------------------------------------------------------------- 收尾
+
+## 鼠标跟随移动：远处全速朝鼠标 → 近处减速 → 贴到身上站住。
+## 注意 _move_input() 读的是 player.mouse_world（不是直接读真实鼠标），所以可以确定性断言；
+## 但 _physics_process 每帧会覆写 mouse_world，因此断言必须在同一帧内同步做完，不能 await。
+func _test_mouse_move() -> void:
+	## 本函数手工喂 mouse_world，先关掉"粘住模式"
+	player.mouse_sticky = false
+	var origin: Vector2 = player.global_position
+	## 远处：满速朝鼠标方向
+	player.mouse_world = origin + Vector2(400.0, 0.0)
+	var far: Vector2 = player._move_input()
+	_check(absf(far.length() - 1.0) < 0.01, "鼠标在远处时未按全速移动：%.3f" % far.length())
+	_check(far.x > 0.99 and absf(far.y) < 0.01, "鼠标在右侧时移动方向不对：%s" % str(far))
+	## 刚出死区：降到最低速度比例
+	player.mouse_world = origin + Vector2(Player.MOUSE_DEAD_ZONE + 1.0, 0.0)
+	var edge: Vector2 = player._move_input()
+	_check(absf(edge.length() - Player.MOUSE_MIN_SPEED) < 0.05,
+		"刚出死区未降到最低速度：%.3f（期望 %.2f）" % [edge.length(), Player.MOUSE_MIN_SPEED])
+	## 死区外中段：速度介于最低与全速之间（验证是线性加速而不是二段跳变）
+	player.mouse_world = origin + Vector2(Player.MOUSE_DEAD_ZONE + Player.MOUSE_SLOW_BAND * 0.5, 0.0)
+	var mid: float = player._move_input().length()
+	_check(mid > Player.MOUSE_MIN_SPEED + 0.05 and mid < 0.95, "死区外中段速度未平滑加速：%.3f" % mid)
+	## 鼠标压在人物身上 / 与人物重合：站住
+	player.mouse_world = origin + Vector2(8.0, 0.0)
+	_check(player._move_input().length() == 0.0, "鼠标贴着人物时未站住")
+	player.mouse_world = origin
+	_check(player._move_input().length() == 0.0, "鼠标与人物重合时未站住")
+	## 朝向保持：鼠标压在人物身上时 face_dir 不应被重置（_update_face 只读 mouse_world，可确定性断言）
+	player.face_dir = Vector2.LEFT
+	player.mouse_world = origin + Vector2(6.0, 0.0)
+	player._update_face()
+	_check(player.face_dir == Vector2.LEFT, "鼠标贴住人物时朝向被改动了：%s" % str(player.face_dir))
+	player.mouse_world = origin + Vector2(300.0, 0.0)
+	player._update_face()
+	_check(player.face_dir.x > 0.99, "鼠标拉远后朝向未更新：%s" % str(player.face_dir))
+	player.face_dir = Vector2.RIGHT
+	## 恢复粘住模式：鼠标恒等于人物位置 → 恒站住（后续测试依赖玩家不乱跑）
+	player.mouse_sticky = true
+	player._physics_process(1.0 / 60.0)
+	_check(player.mouse_world == player.global_position, "粘住模式下鼠标未跟随人物")
+	_check(player._move_input().length() == 0.0, "粘住模式下人物未站住")
+
 
 func _test_death() -> void:
 	Flow.mission_id = ""
@@ -487,6 +530,13 @@ func _reload_battle() -> void:
 	add_child(game)
 	await _frames(3)
 	player = game.player
+	_bind_player()
+
+
+## 接管新生成的玩家：把鼠标粘在身上，否则 headless 下鼠标固定在屏幕原点，
+## 玩家会一路朝左上角狂奔，任何"站在原地"的断言都会失效。
+func _bind_player() -> void:
+	player.mouse_sticky = true
 
 
 func _spawn(kind: int, pos: Vector2) -> EnemyBase:
