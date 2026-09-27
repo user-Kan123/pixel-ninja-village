@@ -120,14 +120,27 @@ func _process(_delta: float) -> void:
 
 
 func _draw() -> void:
-	if kind == "kunai":
-		var dir := velocity.normalized()
-		var perp := Vector2(-dir.y, dir.x)
-		draw_colored_polygon(PackedVector2Array([
-			dir * 9.0, -dir * 5.0 + perp * 3.0, -dir * 5.0 - perp * 3.0,
-		]), color)
-	else:
-		draw_circle(Vector2.ZERO, hit_radius, color)
-		draw_circle(Vector2.ZERO, hit_radius * 0.55, Color(1.0, 0.95, 0.7, 0.9))
-		var flicker := 1.0 + 0.15 * sin(age * 30.0)
-		draw_arc(Vector2.ZERO, hit_radius + 3.0 * flicker, 0.0, TAU, 16, Color(1.0, 0.4, 0.15, 0.5), 2.0)
+	match kind:
+		"kunai":
+			var dir := velocity.normalized()
+			var perp := Vector2(-dir.y, dir.x)
+			draw_colored_polygon(PackedVector2Array([
+				dir * 9.0, -dir * 5.0 + perp * 3.0, -dir * 5.0 - perp * 3.0,
+			]), color)
+			draw_line(-dir * 5.0, -dir * 8.0, color.darkened(0.35), 2.0)
+		"shuriken":
+			## 旋转的四角手里剑
+			var spin := age * 26.0
+			var pts := PackedVector2Array()
+			for i in 4:
+				var a := spin + TAU * float(i) / 4.0 - PI / 4.0
+				pts.append(Vector2.from_angle(a) * (hit_radius + 3.0))
+				pts.append(Vector2.from_angle(a + 0.5) * (hit_radius * 0.36))
+				pts.append(Vector2.from_angle(a - 0.5) * (hit_radius * 0.36))
+			draw_colored_polygon(pts, color)
+			draw_circle(Vector2.ZERO, hit_radius * 0.18, Color(0.1, 0.1, 0.12))
+		_:
+			draw_circle(Vector2.ZERO, hit_radius, color)
+			draw_circle(Vector2.ZERO, hit_radius * 0.55, Color(1.0, 0.95, 0.7, 0.9))
+			var flicker := 1.0 + 0.15 * sin(age * 30.0)
+			draw_arc(Vector2.ZERO, hit_radius + 3.0 * flicker, 0.0, TAU, 16, Color(1.0, 0.4, 0.15, 0.5), 2.0)

@@ -47,6 +47,7 @@ func _ready() -> void:
 	_bind_player()
 	_check(Data.jutsu_list.size() == 15, "忍术表数量不是 15：%d" % Data.jutsu_list.size())
 	_check(Data.missions.size() == 3, "任务表数量不是 3：%d" % Data.missions.size())
+	_check(Data.weapon_list.size() == 4, "忍具表数量不是 4：%d" % Data.weapon_list.size())
 	_check(player.slots_unlocked() == 5, "测试模式下 1 级应解锁 5 个忍术槽：%d" % player.slots_unlocked())
 	_clear_enemies()
 	await _frames(2)
@@ -62,6 +63,7 @@ func _ready() -> void:
 	await _test_growth()
 	await _test_test_mode()
 	_test_loadout()
+	await _test_weapons()
 	_test_mouse_move()
 	_test_flow_save()
 	await _test_mission_hunt()
@@ -70,6 +72,7 @@ func _ready() -> void:
 	await _test_wild_and_pending()
 	await _test_death()
 	await _test_ui_clicks()
+	await _test_shop()
 	_finish()
 
 
@@ -392,20 +395,172 @@ func _test_loadout() -> void:
 	player.jutsu_slots[0] = "blink"
 
 
+## 忍具与装备系统：数据表、武器槽、四种忍具的数值梯度、投掷、切换、装配规则、商店购买
+func _test_weapons() -> void:
+	_check(Data.weapons.size() == 4, "忍具表数量不是 4：%d" % Data.weapons.size())
+	for id_v in ["shuriken", "kunai", "tanto", "longsword"]:
+		var wid := String(id_v)
+		_check(not Data.weapon(wid).is_empty(), "忍具表缺少 " + wid)
+		_check(Data.weapon_name(wid) != wid, "忍具缺少名词：" + wid)
+		_check(Data.weapon_mode(wid) != "", "忍具缺少使用方式：" + wid)
+	## 价格梯度：手里剑 < 苦无 < 短刀 < 长剑
+	var prices: Array = []
+	for id_v in ["shuriken", "kunai", "tanto", "longsword"]:
+		prices.append(int(Data.weapon(String(id_v)).get("price", 0)))
+	for i in range(1, prices.size()):
+		_check(int(prices[i]) > int(prices[i - 1]), "忍具价格没有递增：%s" % str(prices))
+
+	## 四种都塞进背包，后面逐个装配比较
+	for id_v in ["shuriken", "kunai", "tanto", "longsword"]:
+		if not Flow.owns_weapon(String(id_v)):
+			Flow.owned_weapons.append(String(id_v))
+	player.equip_weapon(0, "kunai")
+	player.equip_weapon(1, "")
+	player.active_weapon = 0
+	_check(player.weapon_id() == "kunai", "默认主手不是苦无：%s" % player.weapon_id())
+	_check(player.can_melee(), "苦无应能近战")
+	_check(player.can_throw(), "苦无应能投掷")
+
+	## 手里剑：只能投掷，左键不出刀
+	player.equip_weapon(1, "shuriken")
+	player.active_weapon = 1
+	_check(player.weapon_id() == "shuriken", "副手未装上手里剑：%s" % player.weapon_id())
+	_check(not player.can_melee(), "手里剑不应能近战")
+	_check(player.can_throw(), "手里剑应能投掷")
+	player.state = Player.State.MOVE
+	player.weapon_hint_t = 0.0
+	player._request_attack()
+	await _frames(2)
+	_check(player.state == Player.State.MOVE, "手里剑按左键不应出刀")
+
+	## 投掷：手里剑伤害低、携带多、回手快
+	var sh_ammo: int = player.ammo_count("shuriken")
+	player._throw_weapon(player.global_position + Vector2(200.0, 0.0))
+	var proj = _last_projectile()
+	_check(proj != null and String(proj.kind) == "shuriken", "投出的不是手里剑")
+	if proj != null:
+		_check(is_equal_approx(float(proj.damage), float(Data.weapon("shuriken")["throw_damage"])),
+			"手里剑投掷伤害不符：%s" % str(proj.damage))
+		proj.queue_free()
+	_check(player.ammo_count("shuriken") == sh_ammo - 1,
+		"投掷未消耗忍具：%d → %d" % [sh_ammo, player.ammo_count("shuriken")])
+	_check(player.ammo_max("shuriken") > player.ammo_max("kunai"), "手里剑携带量应多于苦无")
+	_check(float(Data.weapon("shuriken")["throw_recharge"]) < float(Data.weapon("kunai")["throw_recharge"]),
+		"手里剑回手应快于苦无")
+	_check(float(Data.weapon("shuriken")["throw_damage"]) < float(Data.weapon("kunai")["throw_damage"]),
+		"手里剑投掷伤害应低于苦无")
+	## 回手计时：清零后跑够一个间隔应自动补上
+	player.ammo["shuriken"] = 1
+	player.ammo_recharge["shuriken"] = 0.0
+	await _frames(130)
+	_check(player.ammo_count("shuriken") > 1, "手里剑按回手间隔未自动补充：%d" % player.ammo_count("shuriken"))
+
+	## 近战数值梯度：短刀 > 苦无；长剑范围更大、伤害接近短刀、出手更慢
+	player.equip_weapon(0, "kunai")
+	player.active_weapon = 0
+	var kunai_dmg := float(player._melee_step(1)["damage"])
+	var kunai_reach: float = player.melee_reach()
+	var kunai_windup := float(player._melee_step(1)["windup"])
+	player.equip_weapon(0, "tanto")
+	var tanto_dmg := float(player._melee_step(1)["damage"])
+	var tanto_reach: float = player.melee_reach()
+	var tanto_windup := float(player._melee_step(1)["windup"])
+	player.equip_weapon(0, "longsword")
+	var ls_dmg := float(player._melee_step(1)["damage"])
+	var ls_reach: float = player.melee_reach()
+	var ls_windup := float(player._melee_step(1)["windup"])
+	_check(tanto_dmg > kunai_dmg, "短刀近战伤害应高于苦无：%.1f vs %.1f" % [tanto_dmg, kunai_dmg])
+	_check(kunai_reach < tanto_reach, "苦无近战范围应小于短刀：%.1f vs %.1f" % [kunai_reach, tanto_reach])
+	_check(ls_reach > tanto_reach * 1.2, "长剑范围应明显大于短刀：%.1f vs %.1f" % [ls_reach, tanto_reach])
+	_check(absf(ls_dmg - tanto_dmg) <= tanto_dmg * 0.25, "长剑伤害应与短刀接近：%.1f vs %.1f" % [ls_dmg, tanto_dmg])
+	_check(ls_windup > tanto_windup, "长剑出手应慢于短刀：%.3f vs %.3f" % [ls_windup, tanto_windup])
+
+	## 实打实砍一刀，确认数值差距落到了敌人身上
+	var dummy := _spawn(0, player.global_position + Vector2(30.0, 0.0))
+	await _frames(2)
+	player.attack_dir = Vector2.RIGHT
+	player.equip_weapon(0, "kunai")
+	var hp0: float = dummy.hp
+	player.attack_step = player._melee_step(1)
+	player._do_melee_hit()
+	var kunai_hit: float = hp0 - dummy.hp
+	player.equip_weapon(0, "tanto")
+	var hp1: float = dummy.hp
+	player.attack_step = player._melee_step(1)
+	player._do_melee_hit()
+	var tanto_hit: float = hp1 - dummy.hp
+	_check(kunai_hit > 0.0, "苦无近战没打到敌人")
+	_check(tanto_hit > kunai_hit, "短刀实战伤害应高于苦无：%.1f vs %.1f" % [tanto_hit, kunai_hit])
+	dummy.queue_free()
+	await _frames(2)
+
+	## Q 切换主副手
+	player.equip_weapon(0, "kunai")
+	player.equip_weapon(1, "tanto")
+	player.active_weapon = 0
+	_check(player.switch_weapon() == "tanto", "切换武器未切到副手")
+	_check(player.weapon_id() == "tanto", "切换后当前忍具不对：%s" % player.weapon_id())
+	_check(player.switch_weapon() == "kunai", "切换武器未切回主手")
+
+	## 同一件忍具不会占两个槽
+	player.equip_weapon(0, "kunai")
+	player.equip_weapon(1, "kunai")
+	_check(player.weapon_at(0) != player.weapon_at(1),
+		"同一件忍具占了两个槽：%s / %s" % [player.weapon_at(0), player.weapon_at(1)])
+
+	## 未拥有的忍具装不上
+	Flow.owned_weapons.erase("longsword")
+	player.equip_weapon(0, "longsword")
+	_check(player.weapon_id() != "longsword", "未拥有的忍具被装上了武器槽")
+
+	## 商店：赏金不足买不了 / 买完进背包并扣钱 / 重复购买被拒
+	Flow.money = 10
+	var poor := Flow.buy_weapon("longsword")
+	_check(not bool(poor["ok"]) and String(poor["reason"]) == "no_money", "赏金不足时仍能买忍具")
+	var ls_price := int(Data.weapon("longsword")["price"])
+	Flow.money = ls_price + 5
+	var bought := Flow.buy_weapon("longsword")
+	_check(bool(bought["ok"]), "赏金足够时买不到忍具：%s" % str(bought))
+	_check(Flow.owns_weapon("longsword"), "买到的忍具没进背包")
+	_check(Flow.money == 5, "购买没扣赏金：%d" % Flow.money)
+	var again := Flow.buy_weapon("longsword")
+	_check(not bool(again["ok"]) and String(again["reason"]) == "owned", "重复购买未被拒绝")
+
+	## 收尾：恢复主手苦无
+	player.equip_weapon(0, "kunai")
+	player.equip_weapon(1, "")
+	player.active_weapon = 0
+	player.state = Player.State.MOVE
+
+
 ## Flow：赏金 / 天数 / 存档读写
 func _test_flow_save() -> void:
 	_reset_flow()
 	Flow.money = 123
 	Flow.level = 5
 	Flow.day = 3
+	Flow.owned_weapons.clear()
+	Flow.owned_weapons.append("kunai")
+	Flow.owned_weapons.append("tanto")
+	Flow.weapon_slots.clear()
+	Flow.weapon_slots.append("tanto")
+	Flow.weapon_slots.append("kunai")
 	Flow.save_game()
 	Flow.money = 0
 	Flow.level = 1
 	Flow.day = 1
+	Flow.owned_weapons.clear()
+	Flow.owned_weapons.append("kunai")
+	Flow.weapon_slots.clear()
+	Flow.weapon_slots.append("kunai")
+	Flow.weapon_slots.append("")
 	_check(Flow.load_save(), "存档读取失败")
 	_check(Flow.money == 123, "存档金钱不符：%d" % Flow.money)
 	_check(Flow.level == 5, "存档等级不符：%d" % Flow.level)
 	_check(Flow.day == 3, "存档天数不符：%d" % Flow.day)
+	_check(Flow.owned_weapons.has("tanto"), "存档未保留已购买的忍具")
+	_check(Flow.weapon_slots[0] == "tanto" and Flow.weapon_slots[1] == "kunai",
+		"存档未保留武器槽：%s" % str(Flow.weapon_slots))
 	_reset_flow()
 
 
@@ -610,12 +765,54 @@ func _test_ui_clicks() -> void:
 	_check(Flow.pending_mission != "", "点击「接收」未登记待出发任务")
 	_check(not game.board_open(), "接取任务后看板未关闭")
 
-	## 忍术装配：控件同样要铺满，且 15 个忍术必须全部落在一屏内
+	## 装备与背包（B）：控件同样要铺满，默认武器页
 	var lu = game.loadout_ui
-	_check(lu.size == vp, "忍术装配控件尺寸未铺满视口：%s" % str(lu.size))
+	_check(lu.size == vp, "装备界面控件尺寸未铺满视口：%s" % str(lu.size))
 	game.toggle_loadout()
 	await _frames(2)
-	_check(lu.visible, "忍术装配界面未打开")
+	_check(lu.visible, "装备界面未打开")
+	_check(lu.tab == LoadoutUi.Tab.WEAPON, "装备界面默认不是武器页：%d" % lu.tab)
+	## 武器页：4 张忍具卡 + 2 个武器槽都要落在一屏内
+	var wlast: float = lu._weapon_card_rect(Data.weapon_list.size() - 1).end.y
+	_check(wlast < vp.y, "忍具卡片超出屏幕：%.0f > %.0f" % [wlast, vp.y])
+	var wslot_last: float = lu._weapon_slot_rect(Player.WEAPON_SLOT_COUNT - 1).end.y
+	_check(wslot_last < vp.y, "武器槽超出屏幕：%.0f > %.0f" % [wslot_last, vp.y])
+	## 点「苦无」卡片装到选中的武器槽（需要先拥有）
+	Flow.owned_weapons.clear()
+	Flow.owned_weapons.append("kunai")
+	Flow.owned_weapons.append("tanto")
+	player.equip_weapon(0, "")
+	player.equip_weapon(1, "")
+	lu.selected_weapon_slot = 0
+	_push_click(lu._weapon_card_rect(Data.weapon_list.find("kunai")).get_center())
+	await _frames(3)
+	_check(player.weapon_at(0) == "kunai", "点击忍具卡片未装到武器槽：%s" % player.weapon_at(0))
+	## 未拥有的忍具点了不该装上
+	lu.selected_weapon_slot = 1
+	_push_click(lu._weapon_card_rect(Data.weapon_list.find("longsword")).get_center())
+	await _frames(3)
+	_check(player.weapon_at(1) != "longsword", "未拥有的忍具被点上了武器槽")
+	## 点武器槽可切换选中
+	_push_click(lu._weapon_slot_rect(1).get_center())
+	await _frames(2)
+	_check(lu.selected_weapon_slot == 1, "点击武器槽未切换选中：%d" % lu.selected_weapon_slot)
+	## 右键卸下：还剩另一件时可以卸，卸最后一件要被拦住（手上不能什么都没有）
+	player.equip_weapon(0, "kunai")
+	player.equip_weapon(1, "tanto")
+	_push_click(lu._weapon_slot_rect(0).get_center(), MOUSE_BUTTON_RIGHT)
+	await _frames(2)
+	_check(player.weapon_at(0).is_empty(), "还有另一件忍具时应能卸下该槽")
+	_push_click(lu._weapon_slot_rect(1).get_center(), MOUSE_BUTTON_RIGHT)
+	await _frames(2)
+	_check(not player.weapon_at(1).is_empty(), "卸下最后一件忍具没有被拦住")
+	player.equip_weapon(0, "kunai")
+	player.equip_weapon(1, "")
+	player.active_weapon = 0
+
+	## Tab 切到忍术页：控件同样要铺满，且 15 个忍术必须全部落在一屏内
+	_push_key(KEY_TAB)
+	await _frames(2)
+	_check(lu.tab == LoadoutUi.Tab.JUTSU, "Tab 未切到忍术页：%d" % lu.tab)
 	var total: int = Data.jutsu_list.size()
 	var last_y: float = lu._grid_rect(total - 1).end.y
 	_check(last_y < vp.y, "忍术网格最后一行超出屏幕：%.0f > %.0f" % [last_y, vp.y])
@@ -632,9 +829,48 @@ func _test_ui_clicks() -> void:
 	Flow.pending_mission = ""
 
 
-func _push_click(pos: Vector2) -> void:
+## 忍具店：走到店门口按 E 打开 → 点「购买」花赏金买下 → 自动进武器槽 → 关闭
+func _test_shop() -> void:
+	Flow.money = 500
+	Flow.owned_weapons.clear()
+	Flow.owned_weapons.append("kunai")
+	Flow.weapon_slots.clear()
+	Flow.weapon_slots.append("kunai")
+	Flow.weapon_slots.append("")
+	player.weapon_slots.clear()
+	player.weapon_slots.append("kunai")
+	player.weapon_slots.append("")
+	player.active_weapon = 0
+	## 站到忍具店门口
+	player.global_position = game.SHOP_POS + Vector2(0.0, 40.0)
+	await _frames(2)
+	_check(game.current_interact_hint() != "", "站在忍具店门口没有交互提示")
+	game.on_interact()
+	await _frames(2)
+	_check(game.shop_open(), "忍具店未打开")
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	var shop = game.shop_ui
+	_check(shop.size == vp, "忍具店控件尺寸未铺满视口：%s" % str(shop.size))
+	## 点「购买」买短刀：扣赏金、进背包、自动装到空的武器槽
+	var tanto_idx: int = Data.weapon_list.find("tanto")
+	var money_before: int = Flow.money
+	_push_click(shop._buy_rect(tanto_idx).get_center())
+	await _frames(3)
+	_check(Flow.owns_weapon("tanto"), "点「购买」没买到忍具")
+	_check(Flow.money == money_before - int(Data.weapon("tanto")["price"]), "购买没扣赏金：%d" % Flow.money)
+	_check(player.weapon_at(1) == "tanto", "买到的忍具没自动进武器槽：%s" % str(player.weapon_slots))
+	## 已拥有的忍具再点「购买」不会重复扣钱
+	var money_after: int = Flow.money
+	_push_click(shop._buy_rect(tanto_idx).get_center())
+	await _frames(3)
+	_check(Flow.money == money_after, "已拥有的忍具被重复扣费")
+	game.close_shop()
+	_check(not get_tree().paused, "关闭忍具店未恢复游戏")
+
+
+func _push_click(pos: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
 	var e := InputEventMouseButton.new()
-	e.button_index = MOUSE_BUTTON_LEFT
+	e.button_index = button
 	e.pressed = true
 	e.position = pos
 	e.global_position = pos
@@ -722,6 +958,17 @@ func _clear_enemies() -> void:
 		e.queue_free()
 
 
+## 最近生成的一个投射物（投掷忍具的字段断言用）
+func _last_projectile():
+	if game == null or game.projectile_container == null:
+		return null
+	var arr: Array = game.projectile_container.get_children()
+	for i in range(arr.size() - 1, -1, -1):
+		if arr[i] is Projectile:
+			return arr[i]
+	return null
+
+
 func _reset_flow() -> void:
 	Flow.level = 1
 	Flow.xp = 0
@@ -731,6 +978,12 @@ func _reset_flow() -> void:
 	Flow.mission_id = ""
 	Flow.mission_cfg = {}
 	Flow.pending_mission = ""
+	Flow.owned_weapons.clear()
+	for id in Flow.DEFAULT_OWNED_WEAPONS:
+		Flow.owned_weapons.append(String(id))
+	Flow.weapon_slots.clear()
+	for id in Flow.DEFAULT_WEAPON_SLOTS:
+		Flow.weapon_slots.append(String(id))
 
 
 func _check(cond: bool, msg: String) -> void:

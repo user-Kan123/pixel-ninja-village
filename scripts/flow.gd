@@ -4,6 +4,12 @@ extends Node
 
 const SAVE_PATH := "user://pnv_save.json"
 const DEFAULT_LOADOUT := ["blink", "fireball", "great_fireball", "thunder_dash", "shadow_clones"]
+## 开局自带一件苦无（能近战能投掷，容错最高），其余忍具去忍具店买
+const DEFAULT_OWNED_WEAPONS := ["kunai"]
+const DEFAULT_WEAPON_SLOTS := ["kunai", ""]
+const WEAPON_SLOT_COUNT := 2
+## 开局给的少量金钱（原始构想：降生时给一间公寓和少量钱）
+const START_MONEY := 150
 
 ## 持久进度
 var level := 1
@@ -11,6 +17,9 @@ var xp := 0
 var money := 0
 var day := 1
 var loadout: Array[String] = []
+## 已购买的忍具（背包内容）与两个武器槽上的忍具
+var owned_weapons: Array[String] = []
+var weapon_slots: Array[String] = []
 var missions_done := {}
 var unlocked_jutsu: Array[String] = []
 
@@ -36,9 +45,15 @@ func toggle_test_mode() -> bool:
 func _ready() -> void:
 	for id in DEFAULT_LOADOUT:
 		loadout.append(String(id))
+	for id in DEFAULT_OWNED_WEAPONS:
+		owned_weapons.append(String(id))
+	for id in DEFAULT_WEAPON_SLOTS:
+		weapon_slots.append(String(id))
 	for id in Data.jutsu_list:
 		unlocked_jutsu.append(String(id))
-	load_save()
+	if not load_save():
+		## 全新存档：发开局的少量金钱
+		money = START_MONEY
 
 
 # ---------------------------------------------------------------- 场景与任务
@@ -101,6 +116,9 @@ func sync_from_player(p) -> void:
 	loadout.clear()
 	for id in p.jutsu_slots:
 		loadout.append(String(id))
+	weapon_slots.clear()
+	for i in range(WEAPON_SLOT_COUNT):
+		weapon_slots.append(String(p.weapon_at(i)))
 	save_game()
 
 
@@ -115,6 +133,55 @@ func apply_to_player(p) -> void:
 	p.jutsu_slots.clear()
 	for id in loadout:
 		p.jutsu_slots.append(String(id))
+	p.weapon_slots.clear()
+	for i in range(WEAPON_SLOT_COUNT):
+		var wid := String(weapon_slots[i]) if i < weapon_slots.size() else ""
+		## 存档里可能有已经不在商店里的忍具 id，这里兜底过滤掉
+		if not wid.is_empty() and not Data.weapons.has(wid):
+			wid = ""
+		p.weapon_slots.append(wid)
+	p.active_weapon = 0
+	## 兜底：两个武器槽都空（老存档 / 极端情况）时发一把苦无，别让玩家完全没有攻击手段
+	var has_any_weapon := false
+	for wid in p.weapon_slots:
+		if not String(wid).is_empty():
+			has_any_weapon = true
+			break
+	if not has_any_weapon:
+		p.weapon_slots[0] = "kunai"
+	p._sync_active_weapon()
+
+
+# ---------------------------------------------------------------- 忍具商店
+
+func owns_weapon(id: String) -> bool:
+	return owned_weapons.has(id)
+
+
+## 购买忍具：返回 {ok, reason, price, shortfall, name}
+## reason: "owned"（已拥有） / "no_money"（赏金不足） / "unknown"（没有这件忍具）
+func buy_weapon(id: String) -> Dictionary:
+	var w: Dictionary = Data.weapon(id)
+	if w.is_empty():
+		return {"ok": false, "reason": "unknown", "price": 0, "shortfall": 0, "name": id}
+	var price := int(w.get("price", 0))
+	var wname := Data.weapon_name(id)
+	if owns_weapon(id):
+		return {"ok": false, "reason": "owned", "price": price, "shortfall": 0, "name": wname}
+	if money < price:
+		return {"ok": false, "reason": "no_money", "price": price, "shortfall": price - money, "name": wname}
+	money -= price
+	owned_weapons.append(id)
+	## 买到手就自动装进第一个空武器槽，省得再去界面里点一次
+	for i in range(WEAPON_SLOT_COUNT):
+		var cur := String(weapon_slots[i]) if i < weapon_slots.size() else ""
+		if cur.is_empty():
+			while weapon_slots.size() <= i:
+				weapon_slots.append("")
+			weapon_slots[i] = id
+			break
+	save_game()
+	return {"ok": true, "reason": "", "price": price, "shortfall": 0, "name": wname}
 
 
 # ---------------------------------------------------------------- 存档
@@ -126,6 +193,8 @@ func save_game() -> void:
 		"money": money,
 		"day": day,
 		"loadout": Array(loadout),
+		"owned_weapons": Array(owned_weapons),
+		"weapon_slots": Array(weapon_slots),
 		"missions_done": missions_done,
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -153,6 +222,29 @@ func load_save() -> bool:
 		loadout.clear()
 		for id in lo:
 			loadout.append(String(id))
+	## Data.weapons 为空说明数据表还没就绪，此时不做 id 校验，避免把存档读空
+	var has_weapon_table := not Data.weapons.is_empty()
+	var ow: Array = parsed.get("owned_weapons", [])
+	if not ow.is_empty():
+		owned_weapons.clear()
+		for id in ow:
+			var wid := String(id)
+			if (not has_weapon_table or Data.weapons.has(wid)) and not owned_weapons.has(wid):
+				owned_weapons.append(wid)
+	if owned_weapons.is_empty():
+		for id in DEFAULT_OWNED_WEAPONS:
+			owned_weapons.append(String(id))
+	var ws: Array = parsed.get("weapon_slots", [])
+	if not ws.is_empty():
+		weapon_slots.clear()
+		for i in range(WEAPON_SLOT_COUNT):
+			var wid2 := String(ws[i]) if i < ws.size() else ""
+			if has_weapon_table and not wid2.is_empty() and not Data.weapons.has(wid2):
+				wid2 = ""
+			weapon_slots.append(wid2)
+	if weapon_slots.is_empty():
+		for id in DEFAULT_WEAPON_SLOTS:
+			weapon_slots.append(String(id))
 	var md: Variant = parsed.get("missions_done", {})
 	if md is Dictionary:
 		missions_done = md
@@ -162,11 +254,17 @@ func load_save() -> bool:
 func reset_save() -> void:
 	level = 1
 	xp = 0
-	money = 0
+	money = START_MONEY
 	day = 1
 	loadout.clear()
 	for id in DEFAULT_LOADOUT:
 		loadout.append(String(id))
+	owned_weapons.clear()
+	for id in DEFAULT_OWNED_WEAPONS:
+		owned_weapons.append(String(id))
+	weapon_slots.clear()
+	for id in DEFAULT_WEAPON_SLOTS:
+		weapon_slots.append(String(id))
 	missions_done = {}
 	if FileAccess.file_exists(SAVE_PATH):
 		DirAccess.remove_absolute(SAVE_PATH)

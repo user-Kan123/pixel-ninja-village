@@ -1,0 +1,62 @@
+{
+  "shuriken": {
+    "name_key": "weapon.shuriken",
+    "desc_key": "weapon.shuriken.desc",
+    "price": 40,
+    "can_melee": false,
+    "can_throw": true,
+    "melee_damage_mult": 1.0,
+    "melee_range_mult": 1.0,
+    "melee_arc_mult": 1.0,
+    "attack_speed_mult": 1.0,
+    "throw_damage": 6,
+    "throw_speed": 780,
+    "throw_knockback": 110,
+    "throw_max": 14,
+    "throw_recharge": 1.8,
+    "throw_lifetime": 1.0
+  },
+  "kunai": {
+    "name_key": "weapon.kunai",
+    "desc_key": "weapon.kunai.desc",
+    "price": 90,
+    "can_melee": true,
+    "can_throw": true,
+    "melee_damage_mult": 1.0,
+    "melee_range_mult": 0.9,
+    "melee_arc_mult": 1.0,
+    "attack_speed_mult": 1.0,
+    "throw_damage": 10,
+    "throw_speed": 640,
+    "throw_knockback": 150,
+    "throw_max": 8,
+    "throw_recharge": 3.5,
+    "throw_lifetime": 1.1
+  },
+  "tanto": {
+    "name_key": "weapon.tanto",
+    "desc_key": "weapon.tanto.desc",
+    "price": 160,
+    "can_melee": true,
+    "can_throw": false,
+    "melee_damage_mult": 1.35,
+    "melee_range_mult": 1.0,
+    "melee_arc_mult": 1.05,
+    "attack_speed_mult": 1.05,
+    "throw_max": 0,
+    "throw_recharge": 0
+  },
+  "longsword": {
+    "name_key": "weapon.longsword",
+    "desc_key": "weapon.longsword.desc",
+    "price": 260,
+    "can_melee": true,
+    "can_throw": false,
+    "melee_damage_mult": 1.4,
+    "melee_range_mult": 1.38,
+    "melee_arc_mult": 1.25,
+    "attack_speed_mult": 0.78,
+    "throw_max": 0,
+    "throw_recharge": 0
+  }
+}

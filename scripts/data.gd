@@ -8,10 +8,15 @@ const JUTSU_DISPLAY_ORDER := [
 	"rasengan", "sharingan_insight", "substitution", "chakra_flow", "monstrous_strength",
 ]
 
+## 忍具店售卖顺序：由便宜到贵，与「手里剑 → 苦无 → 短刀 → 长剑」的强度梯度一致
+const WEAPON_DISPLAY_ORDER := ["shuriken", "kunai", "tanto", "longsword"]
+
 var strings: Dictionary = {}
 var jutsu: Dictionary = {}
 var missions: Dictionary = {}
+var weapons: Dictionary = {}
 var jutsu_list: Array[String] = []
+var weapon_list: Array[String] = []
 var ui_font: FontFile
 
 
@@ -19,7 +24,9 @@ func _ready() -> void:
 	strings = _load_json("res://data/strings.json").get("zh", {})
 	jutsu = _load_json("res://data/jutsu.json")
 	missions = _load_json("res://data/mission.json")
+	weapons = _load_json("res://data/weapon.json")
 	_build_jutsu_list()
+	_build_weapon_list()
 	_load_font()
 
 
@@ -41,6 +48,91 @@ func _build_jutsu_list() -> void:
 	for id in jutsu:
 		if not jutsu_list.has(id):
 			jutsu_list.append(id)
+
+
+func _build_weapon_list() -> void:
+	weapon_list = []
+	for id in WEAPON_DISPLAY_ORDER:
+		if weapons.has(id):
+			weapon_list.append(id)
+	for id in weapons:
+		if not weapon_list.has(id):
+			weapon_list.append(id)
+
+
+## 忍具静态信息（缺表兜底，避免界面拿到 null）
+func weapon(id: String) -> Dictionary:
+	return weapons.get(id, {})
+
+
+func weapon_name(id: String) -> String:
+	if id.is_empty():
+		return s("loadout.empty")
+	var w: Dictionary = weapon(id)
+	return s(String(w.get("name_key", id)))
+
+
+## 忍具使用方式文案：近战 / 投掷 / 两者
+func weapon_mode(id: String) -> String:
+	var w: Dictionary = weapon(id)
+	var melee := bool(w.get("can_melee", false))
+	var ranged := bool(w.get("can_throw", false))
+	if melee and ranged:
+		return s("weapon.mode.both")
+	if melee:
+		return s("weapon.mode.melee")
+	if ranged:
+		return s("weapon.mode.ranged")
+	return ""
+
+
+## 忍具图标：程序化绘制，无素材依赖，供 HUD / 装备界面 / 商店共用。
+## c 必须是正在执行 _draw 的 CanvasItem。
+static func draw_weapon_icon(c: CanvasItem, id: String, center: Vector2, r: float) -> void:
+	match id:
+		"shuriken":
+			## 四角手里剑：朝四个方向伸出的尖 + 中心圆孔
+			var pts := PackedVector2Array()
+			for i in 4:
+				var a := TAU * float(i) / 4.0 - PI / 4.0
+				var p := center + Vector2.from_angle(a) * r
+				var a1 := a + 0.45
+				var a2 := a - 0.45
+				pts.append(p)
+				pts.append(center + Vector2.from_angle(a1) * r * 0.34)
+				pts.append(center + Vector2.from_angle(a2) * r * 0.34)
+			c.draw_colored_polygon(pts, Color("b9bec6"))
+			c.draw_circle(center, r * 0.16, Color(0.12, 0.12, 0.14))
+		"kunai":
+			## 短刃 + 环柄
+			var d := Vector2(0.86, -0.5).normalized()
+			var perp := Vector2(-d.y, d.x)
+			c.draw_colored_polygon(PackedVector2Array([
+				center + d * r, center - d * r * 0.35 + perp * r * 0.3, center - d * r * 0.35 - perp * r * 0.3,
+			]), Color("c8ccd4"))
+			c.draw_line(center - d * r * 0.3, center - d * r * 0.95, Color("6a5a44"), maxf(r * 0.2, 2.0))
+			c.draw_arc(center - d * r * 0.95, r * 0.28, 0.0, TAU, 14, Color("8a8f98"), maxf(r * 0.14, 1.5))
+		"tanto":
+			## 直短刀：刀刃 + 护手 + 短柄
+			var d2 := Vector2(0.86, -0.5).normalized()
+			var p2 := Vector2(-d2.y, d2.x)
+			c.draw_colored_polygon(PackedVector2Array([
+				center + d2 * r, center + d2 * r * 0.2 + p2 * r * 0.26, center + d2 * r * 0.2 - p2 * r * 0.26,
+			]), Color("dfe3ea"))
+			c.draw_line(center + d2 * r * 0.2 - p2 * r * 0.34, center + d2 * r * 0.2 + p2 * r * 0.34, Color("c8a24a"), maxf(r * 0.18, 2.0))
+			c.draw_line(center + d2 * r * 0.2, center - d2 * r * 0.85, Color("3f3a33"), maxf(r * 0.24, 2.5))
+		"longsword":
+			## 长剑：更长刀刃 + 长护手 + 柄头
+			var d3 := Vector2(0.86, -0.5).normalized()
+			var p3 := Vector2(-d3.y, d3.x)
+			c.draw_colored_polygon(PackedVector2Array([
+				center + d3 * r, center + d3 * r * 0.1 + p3 * r * 0.24, center + d3 * r * 0.1 - p3 * r * 0.24,
+			]), Color("e6eaf1"))
+			c.draw_line(center + d3 * r * 0.1 - p3 * r * 0.5, center + d3 * r * 0.1 + p3 * r * 0.5, Color("c8a24a"), maxf(r * 0.18, 2.0))
+			c.draw_line(center + d3 * r * 0.1, center - d3 * r * 0.9, Color("4a3f33"), maxf(r * 0.22, 2.5))
+			c.draw_circle(center - d3 * r * 0.9, r * 0.15, Color("c8a24a"))
+		_:
+			c.draw_circle(center, r * 0.5, Color(0.6, 0.6, 0.63, 0.8))
 
 
 ## 忍术图标：程序化绘制，无素材依赖，供 HUD 与装配界面共用。

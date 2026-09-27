@@ -44,6 +44,8 @@ const BOARD_POS := Vector2(1385.0, 370.0)
 const TORII_POS := Vector2(1790.0, 250.0)
 const SHRINE_POS := Vector2(520.0, 600.0)
 const GATE_POS := Vector2(1000.0, 1180.0)
+## 忍具店门口：店铺本体是 1580,520 起的建筑，交互点放在门口的街上
+const SHOP_POS := Vector2(1700.0, 720.0)
 const INTERACT_RADIUS := 72.0
 
 var player: Player
@@ -51,6 +53,7 @@ var hud: VillageHud
 var hud_layer: CanvasLayer
 var board_ui: MissionBoardUi
 var loadout_ui: LoadoutUi
+var shop_ui: ShopUi
 var fx_container: Node2D
 var projectile_container: Node2D
 var field_container: Node2D
@@ -128,6 +131,11 @@ func _spawn_ui() -> void:
 	loadout_ui.visible = false
 	loadout_ui.process_mode = Node.PROCESS_MODE_ALWAYS
 	hud_layer.add_child(loadout_ui)
+	shop_ui = ShopUi.new()
+	shop_ui.game = self
+	shop_ui.visible = false
+	shop_ui.process_mode = Node.PROCESS_MODE_ALWAYS
+	hud_layer.add_child(shop_ui)
 
 
 # ---------------------------------------------------------------- 任务接取
@@ -146,6 +154,7 @@ func _nearest_interactable() -> Dictionary:
 		{"pos": BOARD_POS, "kind": "board", "hint": Data.s("village.board") + " · " + Data.s("village.open")},
 		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("village.gate") + " · " + Data.s("village.enter")},
 		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("village.shrine") + " · " + Data.s("village.rest")},
+		{"pos": SHOP_POS, "kind": "shop", "hint": Data.s("village.shop") + " · " + Data.s("village.open_shop")},
 	]
 	## 村口大门：只有接了待出发任务时才能交互
 	if Flow.pending_mission != "":
@@ -180,9 +189,60 @@ func on_interact() -> void:
 			Flow.sync_from_player(player)
 			Flow.save_game()
 			hud.show_notice(Data.s("village.saved"))
+		"shop":
+			toggle_shop()
 		"depart":
 			Flow.sync_from_player(player)
 			Flow.depart_mission()
+
+
+# ---------------------------------------------------------------- 忍具店
+
+func toggle_shop() -> void:
+	if shop_ui.visible:
+		close_shop()
+		return
+	if loadout_open:
+		close_loadout()
+	if board_open():
+		close_board()
+	shop_ui.visible = true
+	shop_ui.on_opened()
+	get_tree().paused = true
+
+
+func close_shop() -> void:
+	shop_ui.visible = false
+	get_tree().paused = false
+
+
+func shop_open() -> bool:
+	return shop_ui != null and shop_ui.visible
+
+
+## 购买忍具：扣赏金、进背包、自动装入空的武器槽；结果回给界面做提示
+func buy_weapon(id: String) -> void:
+	## 先把玩家当前的装配同步给 Flow，否则买完之后会被 Flow 里的旧武器槽覆盖
+	if player != null:
+		Flow.sync_from_player(player)
+	var res := Flow.buy_weapon(id)
+	if bool(res.get("ok", false)):
+		_mirror_weapons_from_flow()
+		shop_ui.show_hint(Data.s("shop.bought") % String(res.get("name", "")))
+	elif String(res.get("reason", "")) == "no_money":
+		shop_ui.show_hint(Data.s("shop.no_money") % int(res.get("shortfall", 0)))
+	elif String(res.get("reason", "")) == "owned":
+		shop_ui.show_hint(Data.s("loadout.owned") + " · " + String(res.get("name", "")))
+	shop_ui.queue_redraw()
+
+
+## Flow 里买到的忍具自动占了一个空槽，这里把它同步到当前场景的玩家实例上
+func _mirror_weapons_from_flow() -> void:
+	if player == null:
+		return
+	for i in range(Player.WEAPON_SLOT_COUNT):
+		var wid := String(Flow.weapon_slots[i]) if i < Flow.weapon_slots.size() else ""
+		player.equip_weapon(i, wid)
 
 
 func toggle_board() -> void:
@@ -191,6 +251,8 @@ func toggle_board() -> void:
 		return
 	if loadout_open:
 		close_loadout()
+	if shop_open():
+		close_shop()
 	board_ui.visible = true
 	get_tree().paused = true
 	board_ui.on_opened()
@@ -210,6 +272,8 @@ func toggle_loadout() -> void:
 		return
 	if board_open():
 		close_board()
+	if shop_open():
+		close_shop()
 	loadout_open = not loadout_open
 	loadout_ui.visible = loadout_open
 	get_tree().paused = loadout_open
@@ -352,6 +416,7 @@ func _draw() -> void:
 	_draw_board()
 	_draw_torii(TORII_POS)
 	_draw_shrine()
+	_draw_shop_stall()
 	_draw_village_gate()
 
 
@@ -513,6 +578,27 @@ func _draw_shrine() -> void:
 		SHRINE_POS + Vector2(-30, -34), SHRINE_POS + Vector2(30, -34), SHRINE_POS + Vector2(0, -58),
 	]), Color("5a4a3a"))
 	draw_rect(Rect2(SHRINE_POS + Vector2(-8, -22), Vector2(16, 22)), Color(0.12, 0.1, 0.08))
+
+
+## 忍具店门口的小摊：遮阳棚 + 摆在台面上的忍具，靠近时发光提示可以交互
+func _draw_shop_stall() -> void:
+	var c := SHOP_POS
+	## 遮阳棚与条纹
+	draw_rect(Rect2(c + Vector2(-54, -52), Vector2(108, 16)), Color("b8402f"))
+	for i in 4:
+		draw_rect(Rect2(c + Vector2(-54 + float(i) * 27.0, -52), Vector2(13, 16)), Color("e8d8b8"))
+	## 台面
+	draw_rect(Rect2(c + Vector2(-46, -24), Vector2(92, 24)), Color("8a6a42"))
+	draw_rect(Rect2(c + Vector2(-46, -24), Vector2(92, 24)), Color("5e4630"), false, 2.0)
+	## 摊上摆的三件忍具
+	Data.draw_weapon_icon(self, "kunai", c + Vector2(-28, -36), 11.0)
+	Data.draw_weapon_icon(self, "shuriken", c + Vector2(0, -36), 11.0)
+	Data.draw_weapon_icon(self, "tanto", c + Vector2(28, -36), 11.0)
+	draw_string(Data.font(), c + Vector2(-42, 16), Data.s("village.shop"),
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("f0e6c8"))
+	if player != null and player.global_position.distance_to(c) < INTERACT_RADIUS:
+		draw_arc(c + Vector2(0, -20), 76.0, 0.0, TAU, 32,
+			Color(1.0, 0.9, 0.5, 0.3 + 0.15 * sin(Time.get_ticks_msec() * 0.005)), 2.5)
 
 
 func _draw_village_gate() -> void:

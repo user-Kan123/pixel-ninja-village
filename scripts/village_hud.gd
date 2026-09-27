@@ -37,8 +37,14 @@ func _draw() -> void:
 	draw_string(font, Vector2(24.0, 34.0), "Lv.%d %s" % [player.level, Data.s(player.rank_key())], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COL_TEXT)
 	draw_string(font, Vector2(24.0, 60.0), Data.s("hud.day") % Flow.day, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COL_DIM)
 	draw_string(font, Vector2(24.0, 84.0), "%s %d 两" % [Data.s("hud.money"), Flow.money], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COL_GOLD)
+	## 已装备的忍具：买完 / 换完能立刻在村里看到结果
+	draw_string(font, Vector2(24.0, 110.0), "%s %s / %s" % [
+		Data.s("village.equipped"),
+		Data.weapon_name(player.weapon_at(0)),
+		Data.weapon_name(player.weapon_at(1)),
+	], HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.78, 0.84, 0.92))
 	## 忍术装配入口单独占一行：避免玩家以为它藏在任务看板里
-	draw_string(font, Vector2(24.0, 112.0), Data.s("village.loadout_key"), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.82, 0.78, 0.55))
+	draw_string(font, Vector2(24.0, 136.0), Data.s("village.loadout_key"), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.82, 0.78, 0.55))
 	## 右上：标题（右对齐必须给 width，否则会溢出屏幕）
 	draw_string(font, Vector2(0.0, 34.0), Data.s("hud.title"), HORIZONTAL_ALIGNMENT_RIGHT, v.x - 24.0, 13, COL_DIM)
 	## 中下：交互提示

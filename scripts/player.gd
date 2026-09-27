@@ -1,6 +1,6 @@
 class_name Player
 extends CharacterBody2D
-## 玩家：俯视移动、三段近战、投掷苦无、5 类施法管线驱动的忍术系统。
+## 玩家：俯视移动、三段近战、忍具投掷、5 类施法管线驱动的忍术系统。
 ##
 ## 施法管线（cast_type，全部由 data/jutsu.json 指定）：
 ##   instant       瞬时：位移 / 召唤 / 自身强化 / 幻术
@@ -10,7 +10,8 @@ extends CharacterBody2D
 ##   channel       引导：按住持续生效，消耗查克拉、可被打断
 ##
 ## 成长：击杀获得经验，升级提升体力/查克拉上限，并在 6 级、12 级各解锁一个忍术槽。
-## 忍术槽内容由装配界面（Tab）决定，本文件不含任何专有名词。
+## 装备：2 个武器槽（Q 切换），近战伤害/范围/攻速与投掷弹道全部由 data/weapon.json 决定；
+## 忍术槽与武器槽内容都由装配界面（B）决定，本文件不含任何专有名词。
 
 enum State { MOVE, ATTACK, SEALING, AIM, CHARGE, GROUND, CHANNEL, DEAD }
 
@@ -19,8 +20,9 @@ const MAX_CHAKRA_BASE := 100.0
 ## 移动速度：已按手感反馈降到原值的 60%（330 → 198）。想整体调快/调慢只改这一个数。
 const MOVE_SPEED := 198.0
 const CHAKRA_REGEN := 9.0
-const KUNAI_MAX := 8
-const KUNAI_RECHARGE := 4.0
+## 武器槽：主手 + 副手，Q 切换。空字符串 = 该槽没装忍具。
+const WEAPON_SLOT_COUNT := 2
+const DEFAULT_WEAPON_SLOTS := ["kunai", ""]
 
 ## 鼠标跟随移动（主操作方式）
 const MOUSE_DEAD_ZONE := 24.0   ## 鼠标离人物多近算"站住"（贴到身上即停）
@@ -54,16 +56,21 @@ const COMBO_STEPS := [
 ]
 const MELEE_RANGE := 76.0
 const MELEE_ARC := deg_to_rad(70.0)
-const KUNAI_SPEED := 640.0
-const KUNAI_DAMAGE := 9.0
 
 var game
 var max_hp := MAX_HP_BASE
 var max_chakra := MAX_CHAKRA_BASE
 var hp := MAX_HP_BASE
 var chakra := MAX_CHAKRA_BASE
-var kunai_count := KUNAI_MAX
-var kunai_recharge_t := 0.0
+
+## 武器槽（主手 / 副手）。Q 切换当前使用的槽；每个忍具的弹药与回手各自独立。
+var weapon_slots: Array[String] = []
+var active_weapon := 0
+## 投掷忍具的余量与回手计时：weapon_id → 数量 / 已积累秒数
+var ammo: Dictionary = {}
+var ammo_recharge: Dictionary = {}
+## 忍具用法不匹配（不能近战 / 不能投掷 / 没余量）时的提示节流
+var weapon_hint_t := 0.0
 
 ## 成长
 var level := 1
@@ -145,6 +152,8 @@ func _ready() -> void:
 	add_to_group("player")
 	for id in DEFAULT_LOADOUT:
 		jutsu_slots.append(String(id))
+	for id in DEFAULT_WEAPON_SLOTS:
+		weapon_slots.append(String(id))
 	for id in Data.jutsu:
 		jutsu_cd[id] = 0.0
 	var col := CollisionShape2D.new()
@@ -160,6 +169,126 @@ func _ready() -> void:
 	cam.limit_right = int(game.arena_size.x)
 	cam.limit_bottom = int(game.arena_size.y)
 	add_child(cam)
+
+
+# ---------------------------------------------------------------- 装备 / 忍具
+
+func weapon_id() -> String:
+	return weapon_at(active_weapon)
+
+
+func weapon_at(slot: int) -> String:
+	if slot < 0 or slot >= weapon_slots.size():
+		return ""
+	return String(weapon_slots[slot])
+
+
+## 传空串取当前手持忍具的配置；传 id 取指定忍具的配置。
+func weapon_cfg(id := "") -> Dictionary:
+	var wid := id if not id.is_empty() else weapon_id()
+	return Data.weapon(wid)
+
+
+func can_melee() -> bool:
+	return bool(weapon_cfg().get("can_melee", false))
+
+
+func can_throw() -> bool:
+	return bool(weapon_cfg().get("can_throw", false))
+
+
+## 近战判定用的有效范围 / 张角（受忍具影响：长剑更远更宽，苦无略短）
+func melee_reach() -> float:
+	return MELEE_RANGE * float(weapon_cfg().get("melee_range_mult", 1.0))
+
+
+func melee_arc() -> float:
+	return MELEE_ARC * float(weapon_cfg().get("melee_arc_mult", 1.0))
+
+
+func ammo_max(wid: String) -> int:
+	return int(Data.weapon(wid).get("throw_max", 0))
+
+
+## 投掷余量：首次访问按携带上限填满（懒初始化，省得关心装备顺序）
+func ammo_count(wid := "") -> int:
+	var id := wid if not wid.is_empty() else weapon_id()
+	if id.is_empty():
+		return 0
+	var mx := ammo_max(id)
+	if mx <= 0:
+		return 0
+	if not ammo.has(id):
+		ammo[id] = mx
+	return int(ammo[id])
+
+
+func _ensure_weapon_slots() -> void:
+	while weapon_slots.size() < WEAPON_SLOT_COUNT:
+		weapon_slots.append("")
+
+
+## 装配武器：同一件忍具不会同时占两个槽（与忍术装配同一套规则）
+func equip_weapon(slot: int, id: String) -> void:
+	_ensure_weapon_slots()
+	if slot < 0 or slot >= WEAPON_SLOT_COUNT:
+		return
+	if not id.is_empty():
+		if not Flow.owns_weapon(id):
+			return
+		for i in weapon_slots.size():
+			if weapon_slots[i] == id:
+				weapon_slots[i] = ""
+	weapon_slots[slot] = id
+	if not id.is_empty():
+		ammo_count(id)
+	_sync_active_weapon()
+
+
+## 当前槽空了就自动切到另一个有忍具的槽
+func _sync_active_weapon() -> void:
+	if not weapon_at(active_weapon).is_empty():
+		return
+	for i in weapon_slots.size():
+		if not weapon_slots[i].is_empty():
+			active_weapon = i
+			return
+
+
+## Q 切换主/副手；另一槽为空时返回空串（不切）
+func switch_weapon() -> String:
+	if weapon_slots.size() < 2:
+		return ""
+	var other := (active_weapon + 1) % weapon_slots.size()
+	if weapon_at(other).is_empty():
+		return ""
+	active_weapon = other
+	return weapon_at(other)
+
+
+## 投掷忍具的回手：每个槽各自累计，装满即停
+func _tick_ammo(delta: float) -> void:
+	for i in weapon_slots.size():
+		var id := String(weapon_slots[i])
+		var mx := ammo_max(id)
+		if mx <= 0:
+			continue
+		if not ammo.has(id):
+			ammo[id] = mx
+		if int(ammo[id]) >= mx:
+			ammo_recharge[id] = 0.0
+			continue
+		var rec := maxf(float(Data.weapon(id).get("throw_recharge", 3.0)), 0.1)
+		ammo_recharge[id] = float(ammo_recharge.get(id, 0.0)) + delta
+		while float(ammo_recharge[id]) >= rec and int(ammo[id]) < mx:
+			ammo_recharge[id] = float(ammo_recharge[id]) - rec
+			ammo[id] = int(ammo[id]) + 1
+
+
+## 忍具装配变更后的 HUD 反馈
+func notify_weapon(text: String) -> void:
+	if game != null and game.hud != null and not text.is_empty():
+		game.hud.show_notice(text)
 
 
 # ---------------------------------------------------------------- 成长
@@ -214,8 +343,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_on_right_click()
 	elif event is InputEventKey and not event.echo:
-		if event.keycode == KEY_TAB and event.pressed:
+		if event.keycode == KEY_B and event.pressed:
+			## B：装备与背包（原 Tab 的忍术装配合并进来，多了武器槽与忍具）
 			game.toggle_loadout()
+			return
+		if event.keycode == KEY_Q and event.pressed:
+			## Q：主手 / 副手切换
+			var switched := switch_weapon()
+			if not switched.is_empty():
+				notify_weapon(Data.s("hud.weapon_switched") % Data.weapon_name(switched))
 			return
 		if event.keycode == KEY_F1 and event.pressed:
 			## 测试模式开关：全忍术 / 5 个忍术槽全解锁（装配界面打开时由 LoadoutUi 接管，那边游戏暂停）
@@ -269,7 +405,7 @@ func _on_right_click() -> void:
 			_cancel_charge()
 		State.MOVE:
 			if not dead:
-				_throw_kunai(mouse_world)
+				_throw_weapon(mouse_world)
 		_:
 			pass
 
@@ -348,11 +484,8 @@ func _physics_process(delta: float) -> void:
 	if not dead:
 		var regen := CHAKRA_REGEN * _passive_mult("chakra_flow", "chakra_regen_mult", 1.0)
 		chakra = minf(chakra + regen * delta, max_chakra)
-		if kunai_count < KUNAI_MAX:
-			kunai_recharge_t += delta
-			if kunai_recharge_t >= KUNAI_RECHARGE:
-				kunai_recharge_t = 0.0
-				kunai_count += 1
+		_tick_ammo(delta)
+	weapon_hint_t = maxf(weapon_hint_t - delta, 0.0)
 	if combo_timer > 0.0:
 		combo_timer -= delta
 		if combo_timer <= 0.0:
@@ -419,6 +552,10 @@ func _request_attack() -> void:
 	if orb_active:
 		## 手持丸子期间双手被占用，不能出刀
 		return
+	if not can_melee():
+		## 手里剑这类只能投掷的忍具：左键不出刀，提示改用右键
+		_weapon_hint("hud.no_melee")
+		return
 	if state == State.MOVE:
 		_start_attack(1)
 	elif state == State.ATTACK:
@@ -426,9 +563,28 @@ func _request_attack() -> void:
 			attack_buffered = true
 
 
+## 用法不匹配的提示：1.5 秒内只弹一次，避免连点刷屏
+func _weapon_hint(key: String) -> void:
+	if weapon_hint_t > 0.0:
+		return
+	weapon_hint_t = 1.5
+	notify_weapon(Data.s(key))
+
+
+## 当前忍具下这一段的连招参数：伤害乘忍具倍率，前摇/判定/收招按攻速缩放
+func _melee_step(stage: int) -> Dictionary:
+	var w := weapon_cfg()
+	var step: Dictionary = (COMBO_STEPS[stage - 1] as Dictionary).duplicate()
+	var spd := maxf(float(w.get("attack_speed_mult", 1.0)), 0.1)
+	step["damage"] = float(step["damage"]) * float(w.get("melee_damage_mult", 1.0))
+	for k in ["windup", "active", "recovery"]:
+		step[k] = float(step[k]) / spd
+	return step
+
+
 func _start_attack(stage: int) -> void:
 	attack_stage = stage
-	attack_step = COMBO_STEPS[stage - 1]
+	attack_step = _melee_step(stage)
 	var dir := mouse_world - global_position
 	attack_dir = dir.normalized() if dir.length() > 1.0 else Vector2.RIGHT
 	attack_phase = 0
@@ -460,16 +616,20 @@ func _tick_attack(delta: float) -> void:
 func _do_melee_hit() -> void:
 	var hit_any := false
 	var buffed := buff_timer > 0.0
+	## 攻击距离与张角随忍具变化：长剑更长更宽，苦无比短刀略短
+	var reach_base := melee_reach()
+	var arc := melee_arc()
+	var w_mult := float(weapon_cfg().get("melee_damage_mult", 1.0))
 	for enemy in get_tree().get_nodes_in_group("enemies"):
 		if not enemy is EnemyBase or enemy.dead:
 			continue
 		var to_e: Vector2 = enemy.global_position - global_position
-		var reach: float = MELEE_RANGE + enemy.hit_radius
+		var reach: float = reach_base + enemy.hit_radius
 		if to_e.length() > reach:
 			continue
-		if to_e.length() > 26.0 and absf(attack_dir.angle_to(to_e)) > MELEE_ARC:
+		if to_e.length() > 26.0 and absf(attack_dir.angle_to(to_e)) > arc:
 			continue
-		var dmg: float = (float(attack_step.damage) + (buff_damage if buffed else 0.0)) * _passive_mult("monstrous_strength", "melee_damage_mult", 1.0)
+		var dmg: float = (float(attack_step.damage) + (buff_damage if buffed else 0.0) * w_mult) * _passive_mult("monstrous_strength", "melee_damage_mult", 1.0)
 		enemy.take_damage(dmg, attack_dir * float(attack_step.knockback))
 		if buffed and buff_paralysis > 0.0:
 			enemy.apply_root(buff_paralysis)
@@ -480,19 +640,32 @@ func _do_melee_hit() -> void:
 		game.hitstop(float(attack_step.hitstop))
 
 
-func _throw_kunai(target: Vector2) -> void:
-	if kunai_count <= 0 or orb_active:
+## 投掷当前忍具。伤害/速度/携带量/回手间隔全部来自 weapon.json：
+## 手里剑 = 伤害低但出手快、携带多；苦无 = 伤害中等、回手一般。
+func _throw_weapon(target: Vector2) -> void:
+	if orb_active:
 		return
-	kunai_count -= 1
+	var id := weapon_id()
+	var w := weapon_cfg()
+	if not bool(w.get("can_throw", false)):
+		_weapon_hint("hud.no_throw")
+		return
+	if ammo_count(id) <= 0:
+		_weapon_hint("hud.no_ammo")
+		return
+	ammo[id] = int(ammo[id]) - 1
 	var dir := (target - global_position).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.RIGHT
+	var is_shuriken := id == "shuriken"
 	Projectile.create(game.projectile_container, global_position + dir * 20.0, dir, {
-		"kind": "kunai",
-		"speed": KUNAI_SPEED,
-		"damage": KUNAI_DAMAGE,
-		"knockback": 150.0,
-		"lifetime": 1.1,
-		"hit_radius": 6.0,
-		"color": Color("e8e2d2"),
+		"kind": id,
+		"speed": float(w.get("throw_speed", 640.0)),
+		"damage": float(w.get("throw_damage", 8.0)),
+		"knockback": float(w.get("throw_knockback", 150.0)),
+		"lifetime": float(w.get("throw_lifetime", 1.1)),
+		"hit_radius": 5.0 if is_shuriken else 6.0,
+		"color": Color("c9ced6") if is_shuriken else Color("e8e2d2"),
 		"game": game,
 	})
 
@@ -987,6 +1160,11 @@ func _draw() -> void:
 	draw_colored_polygon(PackedVector2Array([
 		aim * 24.0 + perp * 4.0, aim * 31.0, aim * 24.0 - perp * 4.0,
 	]), Color(0.95, 0.9, 0.8, 0.85))
+	## 手持忍具：画在朝向的侧前方，随手切换武器立刻能看到手里换了东西
+	var wid := weapon_id()
+	if not wid.is_empty() and not orb_active:
+		var hand := NINJA_ANCHOR + Vector2(0.0, 15.0) + aim * 11.0 + perp * 9.0
+		Data.draw_weapon_icon(self, wid, hand, 8.0)
 	## buff 蓝色光环
 	if buff_timer > 0.0:
 		var pulse := 0.5 + 0.5 * sin(buff_timer * 14.0)
@@ -997,9 +1175,12 @@ func _draw() -> void:
 		if buff_timer > 0.0:
 			col = Color(0.7, 0.95, 1.0, t * 0.9)
 		var a0 := slash_dir.angle()
-		draw_arc(NINJA_ANCHOR, MELEE_RANGE * 0.85, a0 - MELEE_ARC, a0 + MELEE_ARC, 14, col, 5.0 if slash_heavy else 3.0)
+		## 刀光跟着忍具的攻击范围走：长剑的弧明显更长更宽
+		var s_reach := melee_reach()
+		var s_arc := melee_arc()
+		draw_arc(NINJA_ANCHOR, s_reach * 0.85, a0 - s_arc, a0 + s_arc, 14, col, 5.0 if slash_heavy else 3.0)
 		if slash_heavy:
-			draw_arc(NINJA_ANCHOR, MELEE_RANGE * 0.55, a0 - MELEE_ARC * 1.3, a0 + MELEE_ARC * 1.3, 12, Color(1.0, 0.85, 0.4, t * 0.7), 3.0)
+			draw_arc(NINJA_ANCHOR, s_reach * 0.55, a0 - s_arc * 1.3, a0 + s_arc * 1.3, 12, Color(1.0, 0.85, 0.4, t * 0.7), 3.0)
 	if state == State.SEALING:
 		var p := 1.0 - clampf(seal_timer / maxf(float(seal_cfg.get("seal_time", 0.45)), 0.01), 0.0, 1.0)
 		draw_arc(NINJA_ANCHOR, 34.0, -PI / 2.0, -PI / 2.0 + TAU * p, 24, Color(1.0, 0.6, 0.25, 0.9), 3.0)

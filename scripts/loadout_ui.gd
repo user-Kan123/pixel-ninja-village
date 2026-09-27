@@ -1,22 +1,45 @@
 class_name LoadoutUi
 extends Control
-## 忍术装配界面：Tab 打开（游戏暂停），左侧选槽位、右侧点忍术装入。
-## 槽位数量由等级决定（1/1/1/6/12 级解锁 5 个槽），未解锁的槽不可装配。
+## 装备与背包（B 打开，游戏暂停）。两个页签，Tab 切换：
+##   武器 / 忍具：左边 2 个武器槽（主手 / 副手，Q 切换），右边是背包里的忍具
+##   忍术装配  ：左边 5 个忍术槽，右边是已学会的忍术
+## 两个页签操作一致：点左侧槽位选中 → 点右侧卡片装入该槽；右键点槽位卸下。
+## 忍术槽数量由等级决定（1/1/1/6/12 级解锁 5 个槽），武器槽 2 个恒定可用。
+
+enum Tab { WEAPON, JUTSU }
 
 var game
 var player: Player
+var tab := Tab.WEAPON
+## 选中槽位：忍术页与武器页各记一份，来回切页签不会丢选中
 var selected_slot := 0
+var selected_weapon_slot := 0
 
-const PANEL_W := 1010.0
+var hint_text := ""
+var hint_timer := 0.0
+
+const PANEL_W := 1040.0
 const PANEL_H := 664.0
-const HEADER_H := 84.0
-## 左列槽位
+const HEADER_H := 100.0
+const TAB_X := 26.0
+const TAB_Y := 54.0
+const TAB_W := 190.0
+const TAB_H := 34.0
+## 忍术页：左列 5 个槽位 + 右侧 2 列 × 8 行网格
 const SLOT_H := 74.0
 const SLOT_GAP := 104.0
-## 右列忍术网格：2 列 × 8 行，行高压到 66 才能让 15 个忍术全部落在一屏内
 const CARD_W := 360.0
-const CARD_H := 66.0
-const CARD_GAP := 68.0
+const CARD_H := 64.0
+const CARD_GAP := 64.0
+## 武器页：左列 2 个武器槽 + 右侧 2 列 × 2 行忍具卡
+const WSLOT_W := 300.0
+const WSLOT_H := 210.0
+const WSLOT_GAP := 20.0
+const WCARD_W := 320.0
+const WCARD_H := 190.0
+const WCARD_GAP_X := 16.0
+const WCARD_GAP_Y := 24.0
+const WCOL_X := 352.0
 
 
 func _ready() -> void:
@@ -27,8 +50,25 @@ func _ready() -> void:
 
 
 func on_opened() -> void:
-	selected_slot = 0
+	hint_timer = 0.0
 	queue_redraw()
+
+
+func show_tab(t: int) -> void:
+	tab = t
+	queue_redraw()
+
+
+func _flash_hint(text: String) -> void:
+	hint_text = text
+	hint_timer = 2.6
+	queue_redraw()
+
+
+func _process(delta: float) -> void:
+	if hint_timer > 0.0:
+		hint_timer = maxf(hint_timer - delta, 0.0)
+		queue_redraw()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -36,34 +76,68 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		match event.keycode:
-			KEY_TAB, KEY_ESCAPE:
+			KEY_B, KEY_ESCAPE:
 				game.close_loadout()
+			KEY_TAB, KEY_Q:
+				show_tab(Tab.JUTSU if tab == Tab.WEAPON else Tab.WEAPON)
 			KEY_F1:
-				## 装配界面打开时游戏暂停，player._unhandled_input 走不到，这里单独接管
+				## 界面打开时游戏暂停，player._unhandled_input 走不到，这里单独接管
 				Flow.toggle_test_mode()
 				player.notify_test_mode()
-				queue_redraw()
 			KEY_1, KEY_2, KEY_3, KEY_4, KEY_5:
-				selected_slot = int(event.keycode) - int(KEY_1)
+				var idx := int(event.keycode) - int(KEY_1)
+				if tab == Tab.WEAPON:
+					if idx < Player.WEAPON_SLOT_COUNT:
+						selected_weapon_slot = idx
+				else:
+					selected_slot = idx
 				queue_redraw()
 
 
 func _gui_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventMouseButton and event.pressed:
-		var p: Vector2 = event.position
-		if event.button_index == MOUSE_BUTTON_LEFT:
+	if not (event is InputEventMouseButton) or not event.pressed:
+		return
+	var p: Vector2 = event.position
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		## 页签
+		for t in [Tab.WEAPON, Tab.JUTSU]:
+			if _tab_rect(t).has_point(p):
+				show_tab(t)
+				return
+		if tab == Tab.WEAPON:
+			for i in Player.WEAPON_SLOT_COUNT:
+				if _weapon_slot_rect(i).has_point(p):
+					selected_weapon_slot = i
+					queue_redraw()
+					return
+			for j in Data.weapon_list.size():
+				if _weapon_card_rect(j).has_point(p):
+					_assign_weapon(j)
+					return
+		else:
 			for i in 5:
 				if _slot_rect(i).has_point(p):
 					selected_slot = i
 					queue_redraw()
 					return
-			for j in Data.jutsu_list.size():
+			for j in _jutsu_library().size():
 				if _grid_rect(j).has_point(p):
-					_assign(j)
+					_assign_jutsu(j)
 					return
-		elif event.button_index == MOUSE_BUTTON_RIGHT:
+	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		if tab == Tab.WEAPON:
+			for i in Player.WEAPON_SLOT_COUNT:
+				if _weapon_slot_rect(i).has_point(p):
+					## 手上不能什么都没有：两把都空 = 玩家彻底没有攻击手段，所以留最后一件
+					if _other_slot_has_weapon(i):
+						player.equip_weapon(i, "")
+					else:
+						_flash_hint(Data.s("loadout.keep_one"))
+					queue_redraw()
+					return
+		else:
 			for i in 5:
 				if _slot_rect(i).has_point(p):
 					if i < player.jutsu_slots.size():
@@ -72,10 +146,34 @@ func _gui_input(event: InputEvent) -> void:
 					return
 
 
-func _assign(index: int) -> void:
+# ---------------------------------------------------------------- 装配逻辑
+
+## 另一个武器槽上有没有忍具（判断"能不能卸下这一件"）
+func _other_slot_has_weapon(slot: int) -> bool:
+	for j in Player.WEAPON_SLOT_COUNT:
+		if j != slot and not player.weapon_at(j).is_empty():
+			return true
+	return false
+
+
+## 已学会的忍术（忍术库）。当前所有忍术默认都解锁，将来加「卷轴 / 请教」学习线时这里自动收窄。
+func _jutsu_library() -> Array:
+	if Flow.unlocked_jutsu.is_empty():
+		return Data.jutsu_list
+	var out: Array = []
+	for id in Data.jutsu_list:
+		if Flow.unlocked_jutsu.has(id):
+			out.append(id)
+	return out
+
+
+func _assign_jutsu(index: int) -> void:
 	if selected_slot >= player.slots_unlocked():
 		return
-	var id: String = Data.jutsu_list[index]
+	var lib := _jutsu_library()
+	if index < 0 or index >= lib.size():
+		return
+	var id: String = lib[index]
 	## 同一个忍术不重复占两个槽：先从其它槽里摘掉
 	for i in player.jutsu_slots.size():
 		if player.jutsu_slots[i] == id:
@@ -90,11 +188,29 @@ func _assign(index: int) -> void:
 	queue_redraw()
 
 
+func _assign_weapon(index: int) -> void:
+	if index < 0 or index >= Data.weapon_list.size():
+		return
+	var id: String = Data.weapon_list[index]
+	if not Flow.owns_weapon(id):
+		_flash_hint(Data.s("loadout.shop_hint"))
+		return
+	player.equip_weapon(selected_weapon_slot, id)
+	## 装完自动跳到另一个槽，方便直接把主副手配齐
+	selected_weapon_slot = (selected_weapon_slot + 1) % Player.WEAPON_SLOT_COUNT
+	queue_redraw()
+
+
 # ---------------------------------------------------------------- 布局
 
 func _panel_rect() -> Rect2:
 	var v := get_viewport_rect().size
 	return Rect2((v.x - PANEL_W) / 2.0, (v.y - PANEL_H) / 2.0, PANEL_W, PANEL_H)
+
+
+func _tab_rect(t: int) -> Rect2:
+	var p := _panel_rect()
+	return Rect2(p.position.x + TAB_X + float(t) * (TAB_W + 10.0), p.position.y + TAB_Y, TAB_W, TAB_H)
 
 
 func _slot_rect(i: int) -> Rect2:
@@ -113,6 +229,26 @@ func _grid_rect(j: int) -> Rect2:
 	)
 
 
+func _weapon_slot_rect(i: int) -> Rect2:
+	var p := _panel_rect()
+	return Rect2(p.position.x + 26.0, p.position.y + HEADER_H + float(i) * (WSLOT_H + WSLOT_GAP), WSLOT_W, WSLOT_H)
+
+
+func _weapon_card_rect(j: int) -> Rect2:
+	var p := _panel_rect()
+	var col := j % 2
+	var row := int(j / 2.0)
+	return Rect2(
+		p.position.x + WCOL_X + float(col) * (WCARD_W + WCARD_GAP_X),
+		p.position.y + HEADER_H + float(row) * (WCARD_H + WCARD_GAP_Y),
+		WCARD_W, WCARD_H
+	)
+
+
+func _bottom_hint() -> String:
+	return Data.s("loadout.hint_weapon") if tab == Tab.WEAPON else Data.s("loadout.hint")
+
+
 # ---------------------------------------------------------------- 绘制
 
 func _draw() -> void:
@@ -124,15 +260,121 @@ func _draw() -> void:
 	var p := _panel_rect()
 	draw_rect(p, Color("232227"))
 	draw_rect(p, Color(0.85, 0.72, 0.4), false, 2.0)
-	draw_string(font, Vector2(p.position.x + 26.0, p.position.y + 46.0), Data.s("loadout.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
-	draw_string(font, Vector2(p.position.x + 240.0, p.position.y + 46.0), "Lv.%d %s" % [player.level, Data.s(player.rank_key())], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("e0c447"))
+	draw_string(font, Vector2(p.position.x + 26.0, p.position.y + 42.0), Data.s("loadout.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
+	draw_string(font, Vector2(p.position.x + 240.0, p.position.y + 42.0), "Lv.%d %s" % [player.level, Data.s(player.rank_key())], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("e0c447"))
 	## 测试模式提示：右对齐，x 给面板左边、width 给到右边界
 	if Flow.test_unlock_all:
-		draw_string(font, Vector2(p.position.x, p.position.y + 68.0), Data.s("loadout.test_on"),
+		draw_string(font, Vector2(p.position.x, p.position.y + 42.0), Data.s("loadout.test_on"),
 			HORIZONTAL_ALIGNMENT_RIGHT, PANEL_W - 26.0, 13, Color(1.0, 0.62, 0.3))
-	_draw_slots(font)
-	_draw_grid(font)
-	draw_string(font, Vector2(p.position.x + 26.0, p.end.y - 20.0), Data.s("loadout.hint"), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("b8b2a4"))
+	_draw_tabs(font)
+	if tab == Tab.WEAPON:
+		_draw_weapon_slots(font)
+		_draw_weapon_cards(font)
+	else:
+		_draw_slots(font)
+		_draw_grid(font)
+	_draw_footer(font, p)
+
+
+func _draw_tabs(font: Font) -> void:
+	var names := [Data.s("loadout.tab_weapon"), Data.s("loadout.tab_jutsu")]
+	for t in [Tab.WEAPON, Tab.JUTSU]:
+		var r := _tab_rect(t)
+		var on: bool = t == tab
+		draw_rect(r, Color(0.3, 0.26, 0.16) if on else Color(0.13, 0.13, 0.16))
+		draw_rect(r, Color(1.0, 0.82, 0.35) if on else Color(0.34, 0.34, 0.38), false, 2.0 if on else 1.0)
+		draw_string(font, r.position + Vector2(14.0, 23.0), String(names[t]),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("f0ece3") if on else Color(0.66, 0.66, 0.7))
+
+
+func _draw_footer(font: Font, p: Rect2) -> void:
+	var ty := p.end.y - 20.0
+	if hint_timer > 0.0:
+		draw_string(font, Vector2(p.position.x + 26.0, ty), hint_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.85, 0.45))
+	else:
+		draw_string(font, Vector2(p.position.x + 26.0, ty), _bottom_hint(), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("b8b2a4"))
+
+
+func _draw_weapon_slots(font: Font) -> void:
+	for i in Player.WEAPON_SLOT_COUNT:
+		var r := _weapon_slot_rect(i)
+		var id: String = player.weapon_at(i)
+		var sel := i == selected_weapon_slot
+		var in_use: bool = i == player.active_weapon and not id.is_empty()
+		draw_rect(r, Color(0.13, 0.13, 0.16))
+		draw_rect(r, Color(1.0, 0.82, 0.35) if sel else Color(0.35, 0.35, 0.38), false, 2.5 if sel else 1.5)
+		draw_string(font, r.position + Vector2(12.0, 24.0), "%s %d" % [Data.s("loadout.weapon_slot"), i + 1],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("f0ece3"))
+		if in_use:
+			draw_string(font, Vector2(r.position.x, r.position.y + 24.0), Data.s("loadout.in_use"),
+				HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0, 13, Color(0.55, 0.95, 0.6))
+		if id.is_empty():
+			draw_string(font, r.position + Vector2(12.0, 96.0), Data.s("loadout.empty"),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color(0.5, 0.5, 0.52))
+			draw_string(font, r.position + Vector2(12.0, 132.0), Data.s("loadout.shop_hint"),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.55, 0.55, 0.6))
+			continue
+		Data.draw_weapon_icon(self, id, r.position + Vector2(54.0, 112.0), 32.0)
+		draw_string(font, r.position + Vector2(104.0, 98.0), Data.weapon_name(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("f0ece3"))
+		draw_string(font, r.position + Vector2(104.0, 126.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.72, 0.82, 0.95))
+		var slot_lines: Array = _weapon_stats_lines(id)
+		for k in slot_lines.size():
+			draw_string(font, r.position + Vector2(12.0, 156.0 + float(k) * 20.0), String(slot_lines[k]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.66, 0.66, 0.7))
+
+
+func _draw_weapon_cards(font: Font) -> void:
+	for j in Data.weapon_list.size():
+		var id: String = Data.weapon_list[j]
+		var w: Dictionary = Data.weapon(id)
+		var r := _weapon_card_rect(j)
+		var owned := Flow.owns_weapon(id)
+		var equipped := Array(player.weapon_slots).has(id)
+		draw_rect(r, Color(0.16, 0.16, 0.19) if owned else Color(0.12, 0.11, 0.12))
+		draw_rect(r, Color(0.95, 0.78, 0.35) if equipped else (Color(0.3, 0.3, 0.33) if owned else Color(0.24, 0.22, 0.22)), false, 2.0 if equipped else 1.0)
+		Data.draw_weapon_icon(self, id, r.position + Vector2(46.0, 62.0), 30.0)
+		draw_string(font, r.position + Vector2(90.0, 42.0), Data.weapon_name(id),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color("f0ece3") if owned else Color(0.6, 0.6, 0.62))
+		draw_string(font, r.position + Vector2(90.0, 70.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.72, 0.82, 0.95))
+		## 右上角：已装备 / 已拥有 / 价格
+		var tag := ""
+		var tag_col := Color(0.72, 0.6, 0.35)
+		if equipped:
+			tag = Data.s("loadout.equipped")
+			tag_col = Color(0.95, 0.8, 0.35)
+		elif owned:
+			tag = Data.s("loadout.owned")
+			tag_col = Color(0.55, 0.85, 0.6)
+		else:
+			tag = Data.s("shop.price") % int(w.get("price", 0))
+			tag_col = Color(0.9, 0.7, 0.35)
+		draw_string(font, Vector2(r.position.x, r.position.y + 36.0), tag, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0, 14, tag_col)
+		## 描述 + 数值
+		draw_string(font, r.position + Vector2(12.0, 108.0), Data.s(String(w.get("desc_key", ""))),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.66, 0.66, 0.7))
+		var lines: Array = _weapon_stats_lines(id)
+		for k in lines.size():
+			draw_string(font, r.position + Vector2(12.0, 142.0 + float(k) * 22.0), String(lines[k]),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.76, 0.76, 0.8))
+
+
+## 忍具数值：最多两行（近战一行、投掷一行）。六项挤一行会横向溢出卡片。
+func _weapon_stats_lines(id: String) -> Array:
+	var w: Dictionary = Data.weapon(id)
+	var out: Array = []
+	if bool(w.get("can_melee", false)):
+		out.append("%s ×%.2f · %s ×%.2f · %s ×%.2f" % [
+			Data.s("weapon.stat.melee"), float(w.get("melee_damage_mult", 1.0)),
+			Data.s("weapon.stat.range"), float(w.get("melee_range_mult", 1.0)),
+			Data.s("weapon.stat.speed"), float(w.get("attack_speed_mult", 1.0)),
+		])
+	if bool(w.get("can_throw", false)):
+		out.append("%s %d · %s %d · %s %.1fs" % [
+			Data.s("weapon.stat.throw"), int(w.get("throw_damage", 0)),
+			Data.s("weapon.stat.ammo"), int(w.get("throw_max", 0)),
+			Data.s("weapon.stat.recharge"), float(w.get("throw_recharge", 0.0)),
+		])
+	return out
 
 
 func _draw_slots(font: Font) -> void:
@@ -158,8 +400,9 @@ func _draw_slots(font: Font) -> void:
 
 
 func _draw_grid(font: Font) -> void:
-	for j in Data.jutsu_list.size():
-		var id: String = Data.jutsu_list[j]
+	var lib := _jutsu_library()
+	for j in lib.size():
+		var id: String = lib[j]
 		var cfg: Dictionary = Data.jutsu.get(id, {})
 		var r := _grid_rect(j)
 		var equipped := Array(player.jutsu_slots).has(id)

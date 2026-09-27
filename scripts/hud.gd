@@ -1,6 +1,6 @@
 class_name Hud
 extends Control
-## 战斗原型 HUD：体力 / 查克拉 / 经验 / 苦无 / 5 个忍术槽 / 连击 / 状态提示 / 升级提示。
+## 战斗原型 HUD：体力 / 查克拉 / 经验 / 武器槽 / 5 个忍术槽 / 连击 / 状态提示 / 升级提示。
 
 var game
 var player: Player
@@ -84,7 +84,36 @@ func _draw_bars(font: Font) -> void:
 	draw_rect(Rect2(x + 1.0, y3 + 1.0, (w - 2.0) * xp_ratio, 5.0), COL_XP)
 	draw_rect(Rect2(x, y3, w, 7.0), Color(0.1, 0.1, 0.1, 0.9), false, 1.0)
 	draw_string(font, Vector2(x + w + 10.0, y3 + 7.0), "%d / %d" % [player.xp, player.xp_next], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, COL_DIM)
-	draw_string(font, Vector2(x, y3 + 26.0), Data.s("hud.kunai") + " x %d" % player.kunai_count, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, COL_TEXT)
+	_draw_weapons(font, x, y3 + 16.0)
+
+
+## 左上角武器槽：血条下面两块，当前手持的那块高亮，右侧显示投掷余量。
+## 布局照 3A 游戏的做法——不用打开任何界面就知道手上拿的是什么、还能扔几下。
+func _draw_weapons(font: Font, x: float, y: float) -> void:
+	var w := 244.0
+	var h := 64.0
+	var gap := 8.0
+	for i in Player.WEAPON_SLOT_COUNT:
+		var r := Rect2(x, y + float(i) * (h + gap), w, h)
+		var id: String = player.weapon_at(i)
+		var active: bool = i == player.active_weapon and not id.is_empty()
+		draw_rect(r, Color(0, 0, 0, 0.6) if active else Color(0, 0, 0, 0.4))
+		draw_rect(r, Color(1.0, 0.82, 0.35) if active else Color(0.42, 0.42, 0.46), false, 2.0 if active else 1.0)
+		if id.is_empty():
+			draw_string(font, r.position + Vector2(14.0, 38.0), Data.s("loadout.empty"), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.5, 0.5, 0.52))
+			continue
+		Data.draw_weapon_icon(self, id, r.position + Vector2(32.0, h / 2.0), 18.0)
+		draw_string(font, r.position + Vector2(58.0, 26.0), Data.weapon_name(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COL_TEXT if active else COL_DIM)
+		draw_string(font, r.position + Vector2(58.0, 46.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.62, 0.62, 0.68))
+		var mx := player.ammo_max(id)
+		if mx > 0:
+			var cur := player.ammo_count(id)
+			var acol := Color("e0c447") if cur > 0 else Color(0.6, 0.6, 0.62)
+			draw_string(font, Vector2(r.position.x, r.position.y + 42.0), "x %d / %d" % [cur, mx],
+				HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 10.0, 15, acol)
+	if player.weapon_slots.size() > 1:
+		draw_string(font, Vector2(x, y + 2.0 * (h + gap) + 16.0), Data.s("hud.weapon_switch"),
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.42))
 
 
 func _draw_jutsu_slots(font: Font) -> void:
