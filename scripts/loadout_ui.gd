@@ -1,10 +1,10 @@
 class_name LoadoutUi
 extends Control
 ## 装备与背包（B 打开，游戏暂停）。两个页签，Tab 切换：
-##   武器 / 忍具：左边 2 个武器槽（主手 / 副手，Q 切换），右边是背包里的忍具
+##   装备与背包：左边 2 个武器槽（主手 / 副手，Q 切换），右边 24 格背包
 ##   忍术装配  ：左边 5 个忍术槽，右边是已学会的忍术
-## 两个页签操作一致：点左侧槽位选中 → 点右侧卡片装入该槽；右键点槽位卸下。
-## 忍术槽数量由等级决定（1/1/1/6/12 级解锁 5 个槽），武器槽 2 个恒定可用。
+## 背包里：忍具点一下 = 装到选中的武器槽（再点一下换回来），道具点一下 = 立刻使用。
+## 忍术页操作：点左侧槽位选中 → 点右侧卡片装入 → 右键点槽位卸下。
 
 enum Tab { WEAPON, JUTSU }
 
@@ -31,15 +31,16 @@ const SLOT_GAP := 104.0
 const CARD_W := 360.0
 const CARD_H := 64.0
 const CARD_GAP := 64.0
-## 武器页：左列 2 个武器槽 + 右侧 2 列 × 2 行忍具卡
+## 武器页：左列 2 个武器槽 + 右侧 6 × 4 背包格
 const WSLOT_W := 300.0
 const WSLOT_H := 210.0
 const WSLOT_GAP := 20.0
-const WCARD_W := 320.0
-const WCARD_H := 190.0
-const WCARD_GAP_X := 16.0
-const WCARD_GAP_Y := 24.0
-const WCOL_X := 352.0
+const BAG_X := 352.0
+const BAG_Y := 132.0
+const CELL := 96.0
+const CELL_GAP := 8.0
+const BAG_COLS := 6
+const BAG_ROWS := 4
 
 
 func _ready() -> void:
@@ -101,7 +102,6 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	var p: Vector2 = event.position
 	if event.button_index == MOUSE_BUTTON_LEFT:
-		## 页签
 		for t in [Tab.WEAPON, Tab.JUTSU]:
 			if _tab_rect(t).has_point(p):
 				show_tab(t)
@@ -112,9 +112,9 @@ func _gui_input(event: InputEvent) -> void:
 					selected_weapon_slot = i
 					queue_redraw()
 					return
-			for j in Data.weapon_list.size():
-				if _weapon_card_rect(j).has_point(p):
-					_assign_weapon(j)
+			for j in Flow.inventory.size():
+				if _bag_cell_rect(j).has_point(p):
+					_use_bag_cell(j)
 					return
 		else:
 			for i in 5:
@@ -130,9 +130,9 @@ func _gui_input(event: InputEvent) -> void:
 		if tab == Tab.WEAPON:
 			for i in Player.WEAPON_SLOT_COUNT:
 				if _weapon_slot_rect(i).has_point(p):
-					## 手上不能什么都没有：两把都空 = 玩家彻底没有攻击手段，所以留最后一件
-					if _other_slot_has_weapon(i):
-						player.equip_weapon(i, "")
+					## 手上不能什么都没有：至少还得有另一件忍具兜着
+					if _other_weapon_available(i):
+						player.equip_sid(i, -1)
 					else:
 						_flash_hint(Data.s("loadout.keep_one"))
 					queue_redraw()
@@ -146,14 +146,44 @@ func _gui_input(event: InputEvent) -> void:
 					return
 
 
-# ---------------------------------------------------------------- 装配逻辑
+# ---------------------------------------------------------------- 操作
 
-## 另一个武器槽上有没有忍具（判断"能不能卸下这一件"）
-func _other_slot_has_weapon(slot: int) -> bool:
-	for j in Player.WEAPON_SLOT_COUNT:
-		if j != slot and not player.weapon_at(j).is_empty():
+## 背包里还有别的忍具吗（判断"能不能把这一槽卸掉"）
+func _other_weapon_available(slot: int) -> bool:
+	var sid := player.weapon_sid_at(slot)
+	for st in Flow.inventory:
+		if not Data.is_weapon(String(st["id"])):
+			continue
+		if int(st["sid"]) != sid:
 			return true
 	return false
+
+
+## 点背包格：忍具 → 装到选中的武器槽；道具 → 立刻使用
+func _use_bag_cell(i: int) -> void:
+	if i < 0 or i >= Flow.inventory.size():
+		return
+	var st: Dictionary = Flow.inventory[i]
+	var id := String(st["id"])
+	var sid := int(st["sid"])
+	if Data.is_weapon(id):
+		if player.weapon_sid_at(selected_weapon_slot) == sid:
+			## 再点一次同一个格子 = 从槽上摘下来
+			if _other_weapon_available(selected_weapon_slot):
+				player.equip_sid(selected_weapon_slot, -1)
+			else:
+				_flash_hint(Data.s("loadout.keep_one"))
+		else:
+			player.equip_sid(selected_weapon_slot, sid)
+			selected_weapon_slot = (selected_weapon_slot + 1) % Player.WEAPON_SLOT_COUNT
+	elif Data.is_consumable(id):
+		if player.use_item(sid):
+			_flash_hint(Data.s("hud.used_item") % Data.item_name(id))
+		elif player.hp >= player.max_hp and player.chakra >= player.max_chakra:
+			_flash_hint(Data.s("hud.item_full"))
+		else:
+			_flash_hint(Data.s("hud.nothing_to_use"))
+	queue_redraw()
 
 
 ## 已学会的忍术（忍术库）。当前所有忍术默认都解锁，将来加「卷轴 / 请教」学习线时这里自动收窄。
@@ -185,19 +215,6 @@ func _assign_jutsu(index: int) -> void:
 		if nxt < player.slots_unlocked() and player.jutsu_slots[nxt].is_empty():
 			selected_slot = nxt
 			break
-	queue_redraw()
-
-
-func _assign_weapon(index: int) -> void:
-	if index < 0 or index >= Data.weapon_list.size():
-		return
-	var id: String = Data.weapon_list[index]
-	if not Flow.owns_weapon(id):
-		_flash_hint(Data.s("loadout.shop_hint"))
-		return
-	player.equip_weapon(selected_weapon_slot, id)
-	## 装完自动跳到另一个槽，方便直接把主副手配齐
-	selected_weapon_slot = (selected_weapon_slot + 1) % Player.WEAPON_SLOT_COUNT
 	queue_redraw()
 
 
@@ -234,14 +251,14 @@ func _weapon_slot_rect(i: int) -> Rect2:
 	return Rect2(p.position.x + 26.0, p.position.y + HEADER_H + float(i) * (WSLOT_H + WSLOT_GAP), WSLOT_W, WSLOT_H)
 
 
-func _weapon_card_rect(j: int) -> Rect2:
+func _bag_cell_rect(i: int) -> Rect2:
 	var p := _panel_rect()
-	var col := j % 2
-	var row := int(j / 2.0)
+	var col := i % BAG_COLS
+	var row := int(i / float(BAG_COLS))
 	return Rect2(
-		p.position.x + WCOL_X + float(col) * (WCARD_W + WCARD_GAP_X),
-		p.position.y + HEADER_H + float(row) * (WCARD_H + WCARD_GAP_Y),
-		WCARD_W, WCARD_H
+		p.position.x + BAG_X + float(col) * (CELL + CELL_GAP),
+		p.position.y + BAG_Y + float(row) * (CELL + CELL_GAP),
+		CELL, CELL
 	)
 
 
@@ -262,14 +279,15 @@ func _draw() -> void:
 	draw_rect(p, Color(0.85, 0.72, 0.4), false, 2.0)
 	draw_string(font, Vector2(p.position.x + 26.0, p.position.y + 42.0), Data.s("loadout.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
 	draw_string(font, Vector2(p.position.x + 240.0, p.position.y + 42.0), "Lv.%d %s" % [player.level, Data.s(player.rank_key())], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("e0c447"))
-	## 测试模式提示：右对齐，x 给面板左边、width 给到右边界
+	draw_string(font, Vector2(p.position.x, p.position.y + 42.0), "%s %d 两" % [Data.s("hud.money"), Flow.money],
+		HORIZONTAL_ALIGNMENT_RIGHT, PANEL_W - 26.0, 14, Color("e0c447"))
 	if Flow.test_unlock_all:
-		draw_string(font, Vector2(p.position.x, p.position.y + 42.0), Data.s("loadout.test_on"),
-			HORIZONTAL_ALIGNMENT_RIGHT, PANEL_W - 26.0, 13, Color(1.0, 0.62, 0.3))
+		draw_string(font, Vector2(p.position.x, p.position.y + 68.0), Data.s("loadout.test_on"),
+			HORIZONTAL_ALIGNMENT_RIGHT, PANEL_W - 26.0, 12, Color(1.0, 0.62, 0.3))
 	_draw_tabs(font)
 	if tab == Tab.WEAPON:
 		_draw_weapon_slots(font)
-		_draw_weapon_cards(font)
+		_draw_bag(font, p)
 	else:
 		_draw_slots(font)
 		_draw_grid(font)
@@ -314,51 +332,77 @@ func _draw_weapon_slots(font: Font) -> void:
 			draw_string(font, r.position + Vector2(12.0, 132.0), Data.s("loadout.shop_hint"),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.55, 0.55, 0.6))
 			continue
-		Data.draw_weapon_icon(self, id, r.position + Vector2(54.0, 112.0), 32.0)
-		draw_string(font, r.position + Vector2(104.0, 98.0), Data.weapon_name(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("f0ece3"))
-		draw_string(font, r.position + Vector2(104.0, 126.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.72, 0.82, 0.95))
+		Data.draw_item_icon(self, id, r.position + Vector2(54.0, 100.0), 32.0)
+		draw_string(font, r.position + Vector2(104.0, 86.0), Data.weapon_name(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color("f0ece3"))
+		draw_string(font, r.position + Vector2(104.0, 112.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.72, 0.82, 0.95))
+		## 数量（投掷余量）
+		draw_string(font, Vector2(r.position.x, r.position.y + 112.0), "x %d" % player.weapon_count(i),
+			HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 14.0, 15, Color("e0c447"))
+		## 耐久
+		var mx := Data.item_durability(id)
+		if mx > 0.0:
+			var st := player.weapon_stack(i)
+			var ratio := player.weapon_dur_ratio(i)
+			var bar := Rect2(r.position.x + 14.0, r.position.y + 176.0, r.size.x - 28.0, 8.0)
+			draw_rect(bar, Color(0, 0, 0, 0.65))
+			draw_rect(Rect2(bar.position.x + 1.0, bar.position.y + 1.0, (bar.size.x - 2.0) * ratio, 6.0), _dur_color(ratio))
+			draw_rect(bar, Color(0.12, 0.12, 0.12, 0.9), false, 1.0)
+			draw_string(font, Vector2(r.position.x + 14.0, r.position.y + 170.0),
+				"%s %d / %d" % [Data.s("weapon.stat.durability"), int(round(float(st.get("dur", 0.0)))), int(mx)],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.7, 0.7, 0.74))
 		var slot_lines: Array = _weapon_stats_lines(id)
 		for k in slot_lines.size():
-			draw_string(font, r.position + Vector2(12.0, 156.0 + float(k) * 20.0), String(slot_lines[k]),
+			draw_string(font, r.position + Vector2(14.0, 138.0 + float(k) * 18.0), String(slot_lines[k]),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.66, 0.66, 0.7))
 
 
-func _draw_weapon_cards(font: Font) -> void:
-	for j in Data.weapon_list.size():
-		var id: String = Data.weapon_list[j]
-		var w: Dictionary = Data.weapon(id)
-		var r := _weapon_card_rect(j)
-		var owned := Flow.owns_weapon(id)
-		var equipped := Array(player.weapon_slots).has(id)
-		draw_rect(r, Color(0.16, 0.16, 0.19) if owned else Color(0.12, 0.11, 0.12))
-		draw_rect(r, Color(0.95, 0.78, 0.35) if equipped else (Color(0.3, 0.3, 0.33) if owned else Color(0.24, 0.22, 0.22)), false, 2.0 if equipped else 1.0)
-		Data.draw_weapon_icon(self, id, r.position + Vector2(46.0, 62.0), 30.0)
-		draw_string(font, r.position + Vector2(90.0, 42.0), Data.weapon_name(id),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color("f0ece3") if owned else Color(0.6, 0.6, 0.62))
-		draw_string(font, r.position + Vector2(90.0, 70.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.72, 0.82, 0.95))
-		## 右上角：已装备 / 已拥有 / 价格
-		var tag := ""
-		var tag_col := Color(0.72, 0.6, 0.35)
-		if equipped:
-			tag = Data.s("loadout.equipped")
-			tag_col = Color(0.95, 0.8, 0.35)
-		elif owned:
-			tag = Data.s("loadout.owned")
-			tag_col = Color(0.55, 0.85, 0.6)
-		else:
-			tag = Data.s("shop.price") % int(w.get("price", 0))
-			tag_col = Color(0.9, 0.7, 0.35)
-		draw_string(font, Vector2(r.position.x, r.position.y + 36.0), tag, HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 12.0, 14, tag_col)
-		## 描述 + 数值
-		draw_string(font, r.position + Vector2(12.0, 108.0), Data.s(String(w.get("desc_key", ""))),
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.66, 0.66, 0.7))
-		var lines: Array = _weapon_stats_lines(id)
-		for k in lines.size():
-			draw_string(font, r.position + Vector2(12.0, 142.0 + float(k) * 22.0), String(lines[k]),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.76, 0.76, 0.8))
+func _dur_color(ratio: float) -> Color:
+	if ratio > 0.5:
+		return Color(0.45, 0.85, 0.5)
+	if ratio > 0.25:
+		return Color(0.92, 0.8, 0.35)
+	return Color(0.9, 0.4, 0.35)
 
 
-## 忍具数值：最多两行（近战一行、投掷一行）。六项挤一行会横向溢出卡片。
+## 背包：6 × 4 格。忍具 / 道具用同一套格子，堆叠数量与耐久都画在格子里。
+func _draw_bag(font: Font, p: Rect2) -> void:
+	draw_string(font, Vector2(p.position.x + BAG_X, p.position.y + BAG_Y - 12.0),
+		"%s · %s" % [Data.s("bag.title"), Data.s("bag.usage") % [Flow.inv_used(), Flow.INV_SLOTS]],
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("f0ece3"))
+	for i in Flow.INV_SLOTS:
+		var r := _bag_cell_rect(i)
+		draw_rect(r, Color(0.11, 0.11, 0.13))
+		draw_rect(r, Color(0.28, 0.28, 0.31), false, 1.0)
+		if i >= Flow.inventory.size():
+			continue
+		var st: Dictionary = Flow.inventory[i]
+		var id := String(st["id"])
+		var sid := int(st["sid"])
+		## 装在哪个槽上：左上角标 1 / 2
+		for s in Player.WEAPON_SLOT_COUNT:
+			if player.weapon_sid_at(s) == sid:
+				draw_rect(Rect2(r.position, Vector2(20.0, 20.0)), Color(0.95, 0.78, 0.35))
+				draw_string(font, r.position + Vector2(6.0, 16.0), str(s + 1), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.15, 0.12, 0.06))
+		Data.draw_item_icon(self, id, r.position + Vector2(CELL / 2.0, 32.0), 20.0)
+		var nm := Data.item_name(id)
+		draw_string(font, Vector2(r.position.x, r.position.y + 66.0), nm,
+			HORIZONTAL_ALIGNMENT_CENTER, CELL, 12, Color("f0ece3"))
+		var cnt := int(st["count"])
+		if cnt > 1:
+			draw_string(font, Vector2(r.position.x, r.position.y + 84.0), "x%d" % cnt,
+				HORIZONTAL_ALIGNMENT_RIGHT, CELL - 6.0, 13, Color("e0c447"))
+		var mx := Data.item_durability(id)
+		if mx > 0.0:
+			var ratio := clampf(float(st.get("dur", 0.0)) / mx, 0.0, 1.0)
+			var bar := Rect2(r.position.x + 8.0, r.end.y - 9.0, CELL - 16.0, 5.0)
+			draw_rect(bar, Color(0, 0, 0, 0.7))
+			draw_rect(Rect2(bar.position.x + 1.0, bar.position.y + 1.0, (bar.size.x - 2.0) * ratio, 3.0), _dur_color(ratio))
+		elif cnt <= 1:
+			draw_string(font, Vector2(r.position.x, r.position.y + 84.0), Data.s("bag.use") if Data.is_consumable(id) else "",
+				HORIZONTAL_ALIGNMENT_RIGHT, CELL - 6.0, 11, Color(0.6, 0.85, 0.65))
+
+
+## 忍具数值：最多两行（近战一行、投掷一行）
 func _weapon_stats_lines(id: String) -> Array:
 	var w: Dictionary = Data.weapon(id)
 	var out: Array = []
@@ -369,11 +413,7 @@ func _weapon_stats_lines(id: String) -> Array:
 			Data.s("weapon.stat.speed"), float(w.get("attack_speed_mult", 1.0)),
 		])
 	if bool(w.get("can_throw", false)):
-		out.append("%s %d · %s %d · %s %.1fs" % [
-			Data.s("weapon.stat.throw"), int(w.get("throw_damage", 0)),
-			Data.s("weapon.stat.ammo"), int(w.get("throw_max", 0)),
-			Data.s("weapon.stat.recharge"), float(w.get("throw_recharge", 0.0)),
-		])
+		out.append("%s %d" % [Data.s("weapon.stat.throw"), int(w.get("throw_damage", 0))])
 	return out
 
 

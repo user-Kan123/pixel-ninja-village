@@ -48,6 +48,8 @@ func _ready() -> void:
 	_check(Data.jutsu_list.size() == 15, "忍术表数量不是 15：%d" % Data.jutsu_list.size())
 	_check(Data.missions.size() == 3, "任务表数量不是 3：%d" % Data.missions.size())
 	_check(Data.weapon_list.size() == 4, "忍具表数量不是 4：%d" % Data.weapon_list.size())
+	_check(not Data.item_def("hyorogan").is_empty(), "道具表缺少兵粮丸")
+	_check(Data.shop_list().has("hyorogan"), "忍具店货架上没有兵粮丸")
 	_check(player.slots_unlocked() == 5, "测试模式下 1 级应解锁 5 个忍术槽：%d" % player.slots_unlocked())
 	_clear_enemies()
 	await _frames(2)
@@ -193,6 +195,10 @@ func _test_rasengan() -> void:
 	_check(not player.orb_active, "螺旋丸接触后未引爆")
 	_check(dummy.hp < hp_before or dummy.dead, "螺旋丸未造成伤害")
 	## 近战在持丸期间被禁用（本次丸子已引爆，验证可正常出刀）
+	## 注：手上得有能近战的忍具，否则左键本来就不该出刀（空手 / 手里剑都会拒绝）
+	if player.weapon_at(0).is_empty():
+		Flow.inv_add("kunai", 1)
+		player.equip_weapon(0, "kunai")
 	player._request_attack()
 	await _frames(2)
 	_check(player.state == Player.State.ATTACK, "丸子引爆后近战未恢复")
@@ -248,15 +254,21 @@ func _test_passives() -> void:
 	await _frames(2)
 
 
-## 拾取物：回血药
+## 拾取物：药品进背包（不再当场生效），自己吃下去才回血
 func _test_pickup() -> void:
 	player.dead = false
-	player.hp = player.max_hp * 0.5
-	var hp_before: float = player.hp
+	player.hp = maxf(player.max_hp * 0.5, 1.0)
+	_reset_bag()
+	var bag_before := Flow.inv_total("heal_pill")
 	Pickup.create(game.field_container, player.global_position + Vector2(10.0, 0.0), "hp", game)
 	await _frames(6)
-	_check(player.hp > hp_before, "回血药未生效")
+	_check(Flow.inv_total("heal_pill") == bag_before + 1, "回力药没有进背包")
 	_check(get_tree().get_nodes_in_group("pickups").size() == 0, "拾取后药瓶未消失")
+	var sid := Flow.first_sid_of("heal_pill")
+	var hp_before: float = player.hp
+	_check(player.use_item(sid), "背包里的药没能吃下去")
+	_check(player.hp > hp_before, "吃药没有回血")
+	_check(Flow.inv_total("heal_pill") == bag_before, "吃药没有扣掉一个")
 
 
 ## 墙体：敌人贴墙啃咬会造成耐久损耗
@@ -395,7 +407,7 @@ func _test_loadout() -> void:
 	player.jutsu_slots[0] = "blink"
 
 
-## 忍具与装备系统：数据表、武器槽、四种忍具的数值梯度、投掷、切换、装配规则、商店购买
+## 忍具与背包：堆叠上限、真消耗品、耐久与报废、装配规则、道具使用、商店购买
 func _test_weapons() -> void:
 	_check(Data.weapons.size() == 4, "忍具表数量不是 4：%d" % Data.weapons.size())
 	for id_v in ["shuriken", "kunai", "tanto", "longsword"]:
@@ -409,53 +421,119 @@ func _test_weapons() -> void:
 		prices.append(int(Data.weapon(String(id_v)).get("price", 0)))
 	for i in range(1, prices.size()):
 		_check(int(prices[i]) > int(prices[i - 1]), "忍具价格没有递增：%s" % str(prices))
+	_check(not Data.item_def("hyorogan").is_empty(), "道具表缺少兵粮丸")
+	_check(Data.is_consumable("hyorogan") and not Data.is_weapon("hyorogan"), "兵粮丸应算消耗品")
 
-	## 四种都塞进背包，后面逐个装配比较
-	for id_v in ["shuriken", "kunai", "tanto", "longsword"]:
-		if not Flow.owns_weapon(String(id_v)):
-			Flow.owned_weapons.append(String(id_v))
-	player.equip_weapon(0, "kunai")
-	player.equip_weapon(1, "")
+	## 堆叠：可堆叠的一组 16，超出开新格；不可堆叠的一件一格
+	_reset_bag()
+	_check(Flow.inv_add("shuriken", 20) == 20, "手里剑没放进背包")
+	_check(Flow.inv_used() == 2, "20 枚手里剑应占 2 格：%d" % Flow.inv_used())
+	_check(int(Flow.inventory[0]["count"]) == 16, "第一格没装满 16：%d" % int(Flow.inventory[0]["count"]))
+	_check(int(Flow.inventory[1]["count"]) == 4, "第二格数量不对：%d" % int(Flow.inventory[1]["count"]))
+	Flow.inv_add("shuriken", 12)
+	_check(Flow.inv_used() == 2, "补充堆叠时不该开新格：%d" % Flow.inv_used())
+	_check(Flow.inv_add("tanto", 3) == 3, "短刀没放进背包")
+	_check(Flow.inv_used() == 5, "3 把短刀应占 3 格：%d" % Flow.inv_used())
+	## 背包上限 24 格
+	Flow.inv_add("longsword", 40)
+	_check(Flow.inv_used() == Flow.INV_SLOTS, "背包没有卡在 %d 格：%d" % [Flow.INV_SLOTS, Flow.inv_used()])
+	_check(Flow.inv_add("kunai", 1) == 0, "背包满了还能塞东西")
+
+	## 苦无：能近战能投掷；投掷是真消耗品，扔一个少一个且不会自动补充
+	_reset_bag()
+	Flow.inv_add("kunai", 16)
+	Flow.inv_add("shuriken", 4)
+	player.equip_sid(0, Flow.first_sid_of("kunai"))
+	player.equip_sid(1, Flow.first_sid_of("shuriken"))
 	player.active_weapon = 0
-	_check(player.weapon_id() == "kunai", "默认主手不是苦无：%s" % player.weapon_id())
+	_check(player.weapon_id() == "kunai", "主手不是苦无：%s" % player.weapon_id())
 	_check(player.can_melee(), "苦无应能近战")
 	_check(player.can_throw(), "苦无应能投掷")
-
-	## 手里剑：只能投掷，左键不出刀
-	player.equip_weapon(1, "shuriken")
-	player.active_weapon = 1
-	_check(player.weapon_id() == "shuriken", "副手未装上手里剑：%s" % player.weapon_id())
-	_check(not player.can_melee(), "手里剑不应能近战")
-	_check(player.can_throw(), "手里剑应能投掷")
+	_check(player.weapon_count(0) == 16, "武器槽没读到背包数量：%d" % player.weapon_count(0))
 	player.state = Player.State.MOVE
-	player.weapon_hint_t = 0.0
-	player._request_attack()
-	await _frames(2)
-	_check(player.state == Player.State.MOVE, "手里剑按左键不应出刀")
-
-	## 投掷：手里剑伤害低、携带多、回手快
-	var sh_ammo: int = player.ammo_count("shuriken")
+	var kunai_before := Flow.inv_total("kunai")
 	player._throw_weapon(player.global_position + Vector2(200.0, 0.0))
 	var proj = _last_projectile()
-	_check(proj != null and String(proj.kind) == "shuriken", "投出的不是手里剑")
+	_check(proj != null and String(proj.kind) == "kunai", "投出的不是苦无")
 	if proj != null:
-		_check(is_equal_approx(float(proj.damage), float(Data.weapon("shuriken")["throw_damage"])),
-			"手里剑投掷伤害不符：%s" % str(proj.damage))
+		_check(is_equal_approx(float(proj.damage), float(Data.weapon("kunai")["throw_damage"])),
+			"苦无投掷伤害不符：%s" % str(proj.damage))
 		proj.queue_free()
-	_check(player.ammo_count("shuriken") == sh_ammo - 1,
-		"投掷未消耗忍具：%d → %d" % [sh_ammo, player.ammo_count("shuriken")])
-	_check(player.ammo_max("shuriken") > player.ammo_max("kunai"), "手里剑携带量应多于苦无")
-	_check(float(Data.weapon("shuriken")["throw_recharge"]) < float(Data.weapon("kunai")["throw_recharge"]),
-		"手里剑回手应快于苦无")
+	_check(Flow.inv_total("kunai") == kunai_before - 1,
+		"投掷没有消耗苦无：%d → %d" % [kunai_before, Flow.inv_total("kunai")])
+	await _frames(150)
+	_check(Flow.inv_total("kunai") == kunai_before - 1,
+		"忍具被自动补回来了（不该发生）：%d" % Flow.inv_total("kunai"))
 	_check(float(Data.weapon("shuriken")["throw_damage"]) < float(Data.weapon("kunai")["throw_damage"]),
 		"手里剑投掷伤害应低于苦无")
-	## 回手计时：清零后跑够一个间隔应自动补上
-	player.ammo["shuriken"] = 1
-	player.ammo_recharge["shuriken"] = 0.0
-	await _frames(130)
-	_check(player.ammo_count("shuriken") > 1, "手里剑按回手间隔未自动补充：%d" % player.ammo_count("shuriken"))
+	_check(Data.item_stack("shuriken") == 16 and Data.item_stack("kunai") == 16, "投掷忍具应 16 个一组")
+	_check(Data.item_stack("tanto") == 1 and Data.item_stack("longsword") == 1, "近战忍具不该堆叠")
+
+	## 扔完最后一枚：手上的武器自动换掉，不会留在空枪状态
+	_reset_bag()
+	Flow.inv_add("shuriken", 1)
+	Flow.inv_add("tanto", 1)
+	player.equip_sid(0, Flow.first_sid_of("shuriken"))
+	player.equip_sid(1, Flow.first_sid_of("tanto"))
+	player.active_weapon = 0
+	player.state = Player.State.MOVE
+	player._throw_weapon(player.global_position + Vector2(200.0, 0.0))
+	await _frames(3)
+	_check(Flow.inv_total("shuriken") == 0, "手里剑没扣完：%d" % Flow.inv_total("shuriken"))
+	_check(player.weapon_id() == "tanto", "扔完之后没有自动换到另一件武器：%s" % player.weapon_id())
+
+	## 耐久：短刀每命中一次掉 1 点，归零直接报废消失
+	_reset_bag()
+	Flow.inv_add("tanto", 1)
+	var tsid := Flow.first_sid_of("tanto")
+	player.equip_sid(0, tsid)
+	player.equip_sid(1, -1)
+	player.active_weapon = 0
+	var dur_max := Data.item_durability("tanto")
+	_check(dur_max > 0.0, "短刀没有耐久")
+	var dummy := _spawn(0, player.global_position + Vector2(30.0, 0.0))
+	await _frames(2)
+	player.attack_dir = Vector2.RIGHT
+	player.attack_step = player._melee_step(1)
+	player._do_melee_hit()
+	_check(is_equal_approx(float(Flow.inv_find(tsid)["dur"]), dur_max - 1.0),
+		"近战命中没有磨损耐久：%s" % str(Flow.inv_find(tsid)["dur"]))
+	Flow.inv_find(tsid)["dur"] = 1.0
+	player.attack_step = player._melee_step(1)
+	player._do_melee_hit()
+	await _frames(2)
+	_check(Flow.inv_index(tsid) < 0, "耐久归零后短刀没有报废")
+	_check(player.weapon_at(0) != "tanto", "报废后手上还拿着短刀")
+	dummy.queue_free()
+	await _frames(2)
+
+	## 堆叠物的耐久：苦无坏掉一把是"消耗掉一个"，堆里还有就继续用
+	_reset_bag()
+	Flow.inv_add("kunai", 3)
+	var ksid := Flow.first_sid_of("kunai")
+	player.equip_sid(0, ksid)
+	player.equip_sid(1, -1)
+	player.active_weapon = 0
+	Flow.inv_find(ksid)["dur"] = 1.0
+	var dummy2 := _spawn(0, player.global_position + Vector2(30.0, 0.0))
+	await _frames(2)
+	player.attack_dir = Vector2.RIGHT
+	player.attack_step = player._melee_step(1)
+	player._do_melee_hit()
+	await _frames(2)
+	_check(Flow.inv_total("kunai") == 2, "苦无用坏一把后应剩 2 把：%d" % Flow.inv_total("kunai"))
+	_check(player.weapon_id() == "kunai", "苦无堆里还有却把手上的卸掉了")
+	_check(not Flow.inv_find(ksid).is_empty(), "苦无的格子不该整个消失")
+	_check(is_equal_approx(float(Flow.inv_find(ksid)["dur"]), Data.item_durability("kunai")),
+		"换下一把苦无后耐久没有重置：%s" % str(Flow.inv_find(ksid)["dur"]))
+	dummy2.queue_free()
+	await _frames(2)
 
 	## 近战数值梯度：短刀 > 苦无；长剑范围更大、伤害接近短刀、出手更慢
+	_reset_bag()
+	Flow.inv_add("kunai", 1)
+	Flow.inv_add("tanto", 1)
+	Flow.inv_add("longsword", 1)
 	player.equip_weapon(0, "kunai")
 	player.active_weapon = 0
 	var kunai_dmg := float(player._melee_step(1)["damage"])
@@ -475,60 +553,86 @@ func _test_weapons() -> void:
 	_check(absf(ls_dmg - tanto_dmg) <= tanto_dmg * 0.25, "长剑伤害应与短刀接近：%.1f vs %.1f" % [ls_dmg, tanto_dmg])
 	_check(ls_windup > tanto_windup, "长剑出手应慢于短刀：%.3f vs %.3f" % [ls_windup, tanto_windup])
 
-	## 实打实砍一刀，确认数值差距落到了敌人身上
-	var dummy := _spawn(0, player.global_position + Vector2(30.0, 0.0))
+	## 手里剑：只能投掷，左键不出刀
+	_reset_bag()
+	Flow.inv_add("shuriken", 3)
+	player.equip_sid(0, Flow.first_sid_of("shuriken"))
+	player.equip_sid(1, -1)
+	player.active_weapon = 0
+	_check(not player.can_melee(), "手里剑不应能近战")
+	_check(player.can_throw(), "手里剑应能投掷")
+	player.state = Player.State.MOVE
+	player.weapon_hint_t = 0.0
+	player._request_attack()
 	await _frames(2)
-	player.attack_dir = Vector2.RIGHT
-	player.equip_weapon(0, "kunai")
-	var hp0: float = dummy.hp
-	player.attack_step = player._melee_step(1)
-	player._do_melee_hit()
-	var kunai_hit: float = hp0 - dummy.hp
-	player.equip_weapon(0, "tanto")
-	var hp1: float = dummy.hp
-	player.attack_step = player._melee_step(1)
-	player._do_melee_hit()
-	var tanto_hit: float = hp1 - dummy.hp
-	_check(kunai_hit > 0.0, "苦无近战没打到敌人")
-	_check(tanto_hit > kunai_hit, "短刀实战伤害应高于苦无：%.1f vs %.1f" % [tanto_hit, kunai_hit])
-	dummy.queue_free()
-	await _frames(2)
+	_check(player.state == Player.State.MOVE, "手里剑按左键不应出刀")
 
 	## Q 切换主副手
-	player.equip_weapon(0, "kunai")
-	player.equip_weapon(1, "tanto")
+	_reset_bag()
+	Flow.inv_add("kunai", 2)
+	Flow.inv_add("tanto", 1)
+	player.equip_sid(0, Flow.first_sid_of("kunai"))
+	player.equip_sid(1, Flow.first_sid_of("tanto"))
 	player.active_weapon = 0
 	_check(player.switch_weapon() == "tanto", "切换武器未切到副手")
 	_check(player.weapon_id() == "tanto", "切换后当前忍具不对：%s" % player.weapon_id())
 	_check(player.switch_weapon() == "kunai", "切换武器未切回主手")
+	## 同一个背包格不会被两个槽同时指着
+	var ksid2 := Flow.first_sid_of("kunai")
+	player.equip_sid(1, ksid2)
+	_check(player.weapon_sid_at(0) != player.weapon_sid_at(1),
+		"同一个背包格被两个槽同时装着：%d / %d" % [player.weapon_sid_at(0), player.weapon_sid_at(1)])
+	_check(player.weapon_sid_at(1) == ksid2, "第二次装配没有生效")
+	player.equip_sid(0, 99999)
+	_check(player.weapon_sid_at(1) == ksid2, "装不存在的背包格却改动了别的槽")
 
-	## 同一件忍具不会占两个槽
-	player.equip_weapon(0, "kunai")
-	player.equip_weapon(1, "kunai")
-	_check(player.weapon_at(0) != player.weapon_at(1),
-		"同一件忍具占了两个槽：%s / %s" % [player.weapon_at(0), player.weapon_at(1)])
+	## 兵粮丸：F 吃一颗，回血回蓝，数量 -1
+	_reset_bag()
+	Flow.inv_add("hyorogan", 2)
+	player.hp = 40.0
+	player.chakra = 30.0
+	var hp0: float = player.hp
+	var ck0: float = player.chakra
+	_push_key(KEY_F)
+	await _frames(2)
+	_check(Flow.inv_total("hyorogan") == 1, "F 没有消耗兵粮丸：%d" % Flow.inv_total("hyorogan"))
+	_check(player.hp > hp0, "兵粮丸没有回体力：%.0f → %.0f" % [hp0, player.hp])
+	_check(player.chakra > ck0, "兵粮丸没有回查克拉：%.0f → %.0f" % [ck0, player.chakra])
+	## 满血满蓝时不浪费道具
+	player.hp = player.max_hp
+	player.chakra = player.max_chakra
+	_check(not player.use_best_consumable(), "满状态还吃了道具")
+	_check(Flow.inv_total("hyorogan") == 1, "满状态吃道具被扣掉了")
 
-	## 未拥有的忍具装不上
-	Flow.owned_weapons.erase("longsword")
-	player.equip_weapon(0, "longsword")
-	_check(player.weapon_id() != "longsword", "未拥有的忍具被装上了武器槽")
-
-	## 商店：赏金不足买不了 / 买完进背包并扣钱 / 重复购买被拒
+	## 商店：赏金不足 / 背包满 / 短刀可重复买 / 10 个一组买
+	_reset_bag()
 	Flow.money = 10
-	var poor := Flow.buy_weapon("longsword")
+	var poor: Dictionary = Flow.buy_item("longsword", 1)
 	_check(not bool(poor["ok"]) and String(poor["reason"]) == "no_money", "赏金不足时仍能买忍具")
-	var ls_price := int(Data.weapon("longsword")["price"])
-	Flow.money = ls_price + 5
-	var bought := Flow.buy_weapon("longsword")
-	_check(bool(bought["ok"]), "赏金足够时买不到忍具：%s" % str(bought))
-	_check(Flow.owns_weapon("longsword"), "买到的忍具没进背包")
-	_check(Flow.money == 5, "购买没扣赏金：%d" % Flow.money)
-	var again := Flow.buy_weapon("longsword")
-	_check(not bool(again["ok"]) and String(again["reason"]) == "owned", "重复购买未被拒绝")
+	Flow.money = 1000
+	var b1: Dictionary = Flow.buy_item("tanto", 2)
+	_check(bool(b1["ok"]) and int(b1["bought"]) == 2, "买两把短刀失败：%s" % str(b1))
+	_check(Flow.inv_total("tanto") == 2, "短刀数量不对：%d" % Flow.inv_total("tanto"))
+	_check(Flow.inv_used() == 2, "两把短刀应占两格：%d" % Flow.inv_used())
+	_check(Flow.money == 1000 - 2 * Data.item_price("tanto"), "购买没扣对钱：%d" % Flow.money)
+	var b2: Dictionary = Flow.buy_item("shuriken", 10)
+	_check(bool(b2["ok"]) and int(b2["bought"]) == 10, "买 10 枚手里剑失败：%s" % str(b2))
+	_check(Flow.inv_total("shuriken") == 10, "手里剑数量不对：%d" % Flow.inv_total("shuriken"))
+	_check(Flow.inv_used() == 3, "10 枚手里剑应只占 1 格：%d" % Flow.inv_used())
+	## 背包空间不足时只买得到放得下的部分
+	var free_slots := Flow.INV_SLOTS - Flow.inv_used()
+	Flow.money = 100000
+	var b3: Dictionary = Flow.buy_item("longsword", Flow.INV_SLOTS)
+	_check(int(b3["bought"]) <= free_slots, "买超了背包空间：%d > %d" % [int(b3["bought"]), free_slots])
+	_check(Flow.inv_used() == Flow.INV_SLOTS, "背包没被填满：%d" % Flow.inv_used())
+	var b4: Dictionary = Flow.buy_item("kunai", 1)
+	_check(not bool(b4["ok"]) and String(b4["reason"]) == "no_space", "背包满了还能买：%s" % str(b4))
 
-	## 收尾：恢复主手苦无
+	## 收尾
+	_reset_bag()
+	Flow.inv_add("kunai", 8)
 	player.equip_weapon(0, "kunai")
-	player.equip_weapon(1, "")
+	player.equip_sid(1, -1)
 	player.active_weapon = 0
 	player.state = Player.State.MOVE
 
@@ -539,28 +643,30 @@ func _test_flow_save() -> void:
 	Flow.money = 123
 	Flow.level = 5
 	Flow.day = 3
-	Flow.owned_weapons.clear()
-	Flow.owned_weapons.append("kunai")
-	Flow.owned_weapons.append("tanto")
-	Flow.weapon_slots.clear()
-	Flow.weapon_slots.append("tanto")
-	Flow.weapon_slots.append("kunai")
+	_reset_bag()
+	Flow.inv_add("tanto", 2)
+	Flow.inv_add("kunai", 5)
+	Flow.inv_add("hyorogan", 3)
+	var tsid := Flow.first_sid_of("tanto")
+	Flow.equip_sid(0, tsid)
+	Flow.equip_sid(1, Flow.first_sid_of("kunai"))
 	Flow.save_game()
+	## 打乱内存里的状态，再从存档读回来
 	Flow.money = 0
 	Flow.level = 1
 	Flow.day = 1
-	Flow.owned_weapons.clear()
-	Flow.owned_weapons.append("kunai")
-	Flow.weapon_slots.clear()
-	Flow.weapon_slots.append("kunai")
-	Flow.weapon_slots.append("")
+	_reset_bag()
 	_check(Flow.load_save(), "存档读取失败")
 	_check(Flow.money == 123, "存档金钱不符：%d" % Flow.money)
 	_check(Flow.level == 5, "存档等级不符：%d" % Flow.level)
 	_check(Flow.day == 3, "存档天数不符：%d" % Flow.day)
-	_check(Flow.owned_weapons.has("tanto"), "存档未保留已购买的忍具")
-	_check(Flow.weapon_slots[0] == "tanto" and Flow.weapon_slots[1] == "kunai",
-		"存档未保留武器槽：%s" % str(Flow.weapon_slots))
+	_check(Flow.inv_total("tanto") == 2, "存档未保留背包里的短刀：%d" % Flow.inv_total("tanto"))
+	_check(Flow.inv_total("kunai") == 5, "存档未保留苦无数量：%d" % Flow.inv_total("kunai"))
+	_check(Flow.inv_total("hyorogan") == 3, "存档未保留兵粮丸：%d" % Flow.inv_total("hyorogan"))
+	_check(Flow.inv_used() == 4, "存档里的背包格数不对：%d" % Flow.inv_used())
+	_check(String(Flow.inv_find(Flow.sid_of_slot(0))["id"]) == "tanto", "存档未保留主手武器")
+	_check(String(Flow.inv_find(Flow.sid_of_slot(1))["id"]) == "kunai", "存档未保留副手武器")
+	_check(Flow.sid_of_slot(0) == tsid, "武器槽指向的背包格编号没存回来：%d vs %d" % [Flow.sid_of_slot(0), tsid])
 	_reset_flow()
 
 
@@ -772,41 +878,47 @@ func _test_ui_clicks() -> void:
 	await _frames(2)
 	_check(lu.visible, "装备界面未打开")
 	_check(lu.tab == LoadoutUi.Tab.WEAPON, "装备界面默认不是武器页：%d" % lu.tab)
-	## 武器页：4 张忍具卡 + 2 个武器槽都要落在一屏内
-	var wlast: float = lu._weapon_card_rect(Data.weapon_list.size() - 1).end.y
-	_check(wlast < vp.y, "忍具卡片超出屏幕：%.0f > %.0f" % [wlast, vp.y])
+	## 装备页：2 个武器槽 + 24 个背包格都要落在一屏内
 	var wslot_last: float = lu._weapon_slot_rect(Player.WEAPON_SLOT_COUNT - 1).end.y
 	_check(wslot_last < vp.y, "武器槽超出屏幕：%.0f > %.0f" % [wslot_last, vp.y])
-	## 点「苦无」卡片装到选中的武器槽（需要先拥有）
-	Flow.owned_weapons.clear()
-	Flow.owned_weapons.append("kunai")
-	Flow.owned_weapons.append("tanto")
-	player.equip_weapon(0, "")
-	player.equip_weapon(1, "")
+	var cell_last: Rect2 = lu._bag_cell_rect(Flow.INV_SLOTS - 1)
+	_check(cell_last.end.y < vp.y, "背包最后一格超出屏幕下边缘：%.0f > %.0f" % [cell_last.end.y, vp.y])
+	_check(cell_last.end.x < vp.x, "背包最后一格超出屏幕右边缘：%.0f > %.0f" % [cell_last.end.x, vp.x])
+	## 点背包里的苦无 → 装到选中的武器槽（第 0 格）
+	_reset_bag()
+	Flow.inv_add("kunai", 4)
+	Flow.inv_add("tanto", 1)
+	Flow.inv_add("hyorogan", 2)
 	lu.selected_weapon_slot = 0
-	_push_click(lu._weapon_card_rect(Data.weapon_list.find("kunai")).get_center())
+	_push_click(lu._bag_cell_rect(0).get_center())
 	await _frames(3)
-	_check(player.weapon_at(0) == "kunai", "点击忍具卡片未装到武器槽：%s" % player.weapon_at(0))
-	## 未拥有的忍具点了不该装上
-	lu.selected_weapon_slot = 1
-	_push_click(lu._weapon_card_rect(Data.weapon_list.find("longsword")).get_center())
+	_check(player.weapon_at(0) == "kunai", "点背包里的忍具没装到武器槽：%s" % player.weapon_at(0))
+	## 点道具 → 直接使用（第 2 格 = 兵粮丸）
+	player.hp = 50.0
+	player.chakra = 50.0
+	var pills: int = Flow.inv_total("hyorogan")
+	_push_click(lu._bag_cell_rect(2).get_center())
 	await _frames(3)
-	_check(player.weapon_at(1) != "longsword", "未拥有的忍具被点上了武器槽")
+	_check(Flow.inv_total("hyorogan") == pills - 1, "点背包里的道具没有消耗：%d" % Flow.inv_total("hyorogan"))
+	_check(player.hp > 50.0, "点道具没有生效")
 	## 点武器槽可切换选中
 	_push_click(lu._weapon_slot_rect(1).get_center())
 	await _frames(2)
 	_check(lu.selected_weapon_slot == 1, "点击武器槽未切换选中：%d" % lu.selected_weapon_slot)
-	## 右键卸下：还剩另一件时可以卸，卸最后一件要被拦住（手上不能什么都没有）
-	player.equip_weapon(0, "kunai")
-	player.equip_weapon(1, "tanto")
+	## 右键卸下：背包里还剩另一件忍具时可以卸，卸最后一件要被拦住
+	_reset_bag()
+	Flow.inv_add("tanto", 1)
+	player.equip_sid(0, Flow.first_sid_of("tanto"))
+	player.weapon_sids[1] = -1
 	_push_click(lu._weapon_slot_rect(0).get_center(), MOUSE_BUTTON_RIGHT)
 	await _frames(2)
-	_check(player.weapon_at(0).is_empty(), "还有另一件忍具时应能卸下该槽")
-	_push_click(lu._weapon_slot_rect(1).get_center(), MOUSE_BUTTON_RIGHT)
+	_check(not player.weapon_at(0).is_empty(), "卸下最后一件忍具没有被拦住")
+	Flow.inv_add("kunai", 2)
+	_push_click(lu._weapon_slot_rect(0).get_center(), MOUSE_BUTTON_RIGHT)
 	await _frames(2)
-	_check(not player.weapon_at(1).is_empty(), "卸下最后一件忍具没有被拦住")
+	_check(player.weapon_at(0).is_empty(), "背包里还有别的忍具时应能卸下该槽")
 	player.equip_weapon(0, "kunai")
-	player.equip_weapon(1, "")
+	player.equip_sid(1, -1)
 	player.active_weapon = 0
 
 	## Tab 切到忍术页：控件同样要铺满，且 15 个忍术必须全部落在一屏内
@@ -829,18 +941,10 @@ func _test_ui_clicks() -> void:
 	Flow.pending_mission = ""
 
 
-## 忍具店：走到店门口按 E 打开 → 点「购买」花赏金买下 → 自动进武器槽 → 关闭
+## 忍具店：走到店门口按 E 打开 → 买 1 / 买 10 → 真扣钱真进包 → 关闭
 func _test_shop() -> void:
 	Flow.money = 500
-	Flow.owned_weapons.clear()
-	Flow.owned_weapons.append("kunai")
-	Flow.weapon_slots.clear()
-	Flow.weapon_slots.append("kunai")
-	Flow.weapon_slots.append("")
-	player.weapon_slots.clear()
-	player.weapon_slots.append("kunai")
-	player.weapon_slots.append("")
-	player.active_weapon = 0
+	_reset_bag()
 	## 站到忍具店门口
 	player.global_position = game.SHOP_POS + Vector2(0.0, 40.0)
 	await _frames(2)
@@ -851,19 +955,39 @@ func _test_shop() -> void:
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	var shop = game.shop_ui
 	_check(shop.size == vp, "忍具店控件尺寸未铺满视口：%s" % str(shop.size))
-	## 点「购买」买短刀：扣赏金、进背包、自动装到空的武器槽
-	var tanto_idx: int = Data.weapon_list.find("tanto")
-	var money_before: int = Flow.money
-	_push_click(shop._buy_rect(tanto_idx).get_center())
+	var shelf := Data.shop_list()
+	_check(shelf.has("hyorogan"), "忍具店没有卖兵粮丸：%s" % str(shelf))
+	_check(Data.item_price("hyorogan") <= 30 && Data.item_price("hyorogan") > 0,
+		"兵粮丸定价不合理（应便宜但不免费）：%d" % Data.item_price("hyorogan"))
+	## 买 10 枚手里剑：按 16 一组堆进一格，扣 10 个的钱
+	var sh_idx: int = shelf.find("shuriken")
+	var money0: int = Flow.money
+	_push_click(shop._buy10_rect(sh_idx).get_center())
 	await _frames(3)
-	_check(Flow.owns_weapon("tanto"), "点「购买」没买到忍具")
-	_check(Flow.money == money_before - int(Data.weapon("tanto")["price"]), "购买没扣赏金：%d" % Flow.money)
-	_check(player.weapon_at(1) == "tanto", "买到的忍具没自动进武器槽：%s" % str(player.weapon_slots))
-	## 已拥有的忍具再点「购买」不会重复扣钱
-	var money_after: int = Flow.money
-	_push_click(shop._buy_rect(tanto_idx).get_center())
+	_check(Flow.inv_total("shuriken") == 10, "买 10 没买到 10 个：%d" % Flow.inv_total("shuriken"))
+	_check(Flow.inv_used() == 1, "10 枚手里剑应装在同一格：%d" % Flow.inv_used())
+	_check(Flow.money == money0 - 10 * Data.item_price("shuriken"), "买 10 扣的钱不对：%d" % Flow.money)
+	## 短刀可以重复购买：买两把 = 两格，各自独立耐久
+	var t_idx: int = shelf.find("tanto")
+	_push_click(shop._buy1_rect(t_idx).get_center())
 	await _frames(3)
-	_check(Flow.money == money_after, "已拥有的忍具被重复扣费")
+	_push_click(shop._buy1_rect(t_idx).get_center())
+	await _frames(3)
+	_check(Flow.inv_total("tanto") == 2, "短刀不能重复购买：%d" % Flow.inv_total("tanto"))
+	_check(Flow.inv_used() == 3, "两把短刀应是两格：%d" % Flow.inv_used())
+	_check(not player.weapon_at(0).is_empty() or not player.weapon_at(1).is_empty(),
+		"买到的忍具没自动进武器槽")
+	## 兵粮丸也能买进背包
+	_push_click(shop._buy1_rect(shelf.find("hyorogan")).get_center())
+	await _frames(3)
+	_check(Flow.inv_total("hyorogan") == 1, "没买到兵粮丸：%d" % Flow.inv_total("hyorogan"))
+	## 赏金不足：不扣钱也不给东西
+	Flow.money = 0
+	var ls_before: int = Flow.inv_total("longsword")
+	_push_click(shop._buy1_rect(shelf.find("longsword")).get_center())
+	await _frames(3)
+	_check(Flow.inv_total("longsword") == ls_before, "赏金不足却买到了长剑")
+	_check(Flow.money == 0, "赏金不足时钱变成了负数：%d" % Flow.money)
 	game.close_shop()
 	_check(not get_tree().paused, "关闭忍具店未恢复游戏")
 
@@ -969,6 +1093,22 @@ func _last_projectile():
 	return null
 
 
+## 清空背包与武器槽（player 还没生成时也能调）
+func _reset_bag() -> void:
+	Flow.inventory.clear()
+	Flow.inv_next_sid = 1
+	Flow.weapon_sids.clear()
+	Flow._ensure_weapon_slots()
+	for i in Flow.WEAPON_SLOT_COUNT:
+		Flow.weapon_sids[i] = -1
+	if player != null:
+		player.weapon_sids.clear()
+		player._ensure_weapon_slots()
+		for i in Player.WEAPON_SLOT_COUNT:
+			player.weapon_sids[i] = -1
+		player.active_weapon = 0
+
+
 func _reset_flow() -> void:
 	Flow.level = 1
 	Flow.xp = 0
@@ -978,12 +1118,7 @@ func _reset_flow() -> void:
 	Flow.mission_id = ""
 	Flow.mission_cfg = {}
 	Flow.pending_mission = ""
-	Flow.owned_weapons.clear()
-	for id in Flow.DEFAULT_OWNED_WEAPONS:
-		Flow.owned_weapons.append(String(id))
-	Flow.weapon_slots.clear()
-	for id in Flow.DEFAULT_WEAPON_SLOTS:
-		Flow.weapon_slots.append(String(id))
+	_reset_bag()
 
 
 func _check(cond: bool, msg: String) -> void:

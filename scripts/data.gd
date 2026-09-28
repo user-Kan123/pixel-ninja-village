@@ -10,13 +10,18 @@ const JUTSU_DISPLAY_ORDER := [
 
 ## 忍具店售卖顺序：由便宜到贵，与「手里剑 → 苦无 → 短刀 → 长剑」的强度梯度一致
 const WEAPON_DISPLAY_ORDER := ["shuriken", "kunai", "tanto", "longsword"]
+## 消耗品显示顺序（兵粮丸排在最前，因为它是唯一在店里卖的）
+const ITEM_DISPLAY_ORDER := ["hyorogan", "heal_pill", "chakra_pill"]
 
 var strings: Dictionary = {}
 var jutsu: Dictionary = {}
 var missions: Dictionary = {}
 var weapons: Dictionary = {}
+## 消耗品表（兵粮丸 / 回力药 / 查克拉药）
+var items: Dictionary = {}
 var jutsu_list: Array[String] = []
 var weapon_list: Array[String] = []
+var item_list: Array[String] = []
 var ui_font: FontFile
 
 
@@ -25,8 +30,10 @@ func _ready() -> void:
 	jutsu = _load_json("res://data/jutsu.json")
 	missions = _load_json("res://data/mission.json")
 	weapons = _load_json("res://data/weapon.json")
+	items = _load_json("res://data/item.json")
 	_build_jutsu_list()
 	_build_weapon_list()
+	_build_item_list()
 	_load_font()
 
 
@@ -58,6 +65,97 @@ func _build_weapon_list() -> void:
 	for id in weapons:
 		if not weapon_list.has(id):
 			weapon_list.append(id)
+
+
+func _build_item_list() -> void:
+	item_list = []
+	for id in ITEM_DISPLAY_ORDER:
+		if items.has(id):
+			item_list.append(id)
+	for id in items:
+		if not item_list.has(id):
+			item_list.append(id)
+
+
+# ---------------------------------------------------------------- 背包物品的统一视图
+
+## 背包里的东西分两张家：武器表（weapon.json）与消耗品表（item.json）。
+## 背包、商店、HUD 都只认这个统一入口，所以以后加「起爆符」「毒苦无」只要往表里加一条。
+func item_def(id: String) -> Dictionary:
+	if weapons.has(id):
+		return weapons[id]
+	if items.has(id):
+		return items[id]
+	return {}
+
+
+func has_item(id: String) -> bool:
+	return weapons.has(id) or items.has(id)
+
+
+func is_weapon(id: String) -> bool:
+	return weapons.has(id)
+
+
+func is_consumable(id: String) -> bool:
+	return items.has(id)
+
+
+func item_name(id: String) -> String:
+	if id.is_empty():
+		return s("loadout.empty")
+	var d: Dictionary = item_def(id)
+	return s(String(d.get("name_key", id)))
+
+
+func item_desc(id: String) -> String:
+	var d: Dictionary = item_def(id)
+	return s(String(d.get("desc_key", "")))
+
+
+## 一格里最多放几个（1 = 不可堆叠）
+func item_stack(id: String) -> int:
+	return maxi(int(item_def(id).get("stack", 1)), 1)
+
+
+## 满耐久（0 = 没有耐久这个概念，比如手里剑）
+func item_durability(id: String) -> float:
+	return float(item_def(id).get("durability", 0.0))
+
+
+func item_price(id: String) -> int:
+	return int(item_def(id).get("price", 0))
+
+
+## 忍具店货架：武器 + 定价大于 0 的消耗品
+func shop_list() -> Array:
+	var out: Array = []
+	for id in weapon_list:
+		out.append(id)
+	for id in item_list:
+		if item_price(id) > 0:
+			out.append(id)
+	return out
+
+
+## 背包 / 商店共用的图标：武器走武器图标，消耗品画成一颗丸子
+static func draw_item_icon(c: CanvasItem, id: String, center: Vector2, r: float) -> void:
+	if Data.weapons.has(id):
+		draw_weapon_icon(c, id, center, r)
+		return
+	if id == "chakra_pill":
+		c.draw_circle(center, r * 0.8, Color("4a7fd4"))
+		c.draw_circle(center + Vector2(-r * 0.25, -r * 0.25), r * 0.24, Color("cfe0ff"))
+		c.draw_arc(center, r * 0.9, 0.0, TAU, 18, Color(0.45, 0.7, 1.0, 0.75), maxf(r * 0.12, 1.0))
+	elif id == "heal_pill":
+		c.draw_circle(center, r * 0.8, Color("58b866"))
+		c.draw_circle(center + Vector2(-r * 0.25, -r * 0.25), r * 0.24, Color("d8f5d8"))
+		c.draw_arc(center, r * 0.9, 0.0, TAU, 18, Color(0.5, 0.9, 0.6, 0.75), maxf(r * 0.12, 1.0))
+	else:
+		## 兵粮丸：棕色丸子 + 高光（默认分支，方便以后加同类食物）
+		c.draw_circle(center, r * 0.8, Color("b07a3c"))
+		c.draw_circle(center + Vector2(-r * 0.26, -r * 0.26), r * 0.26, Color("e8c89a"))
+		c.draw_arc(center, r * 0.9, 0.0, TAU, 18, Color(0.85, 0.6, 0.3, 0.7), maxf(r * 0.12, 1.0))
 
 
 ## 忍具静态信息（缺表兜底，避免界面拿到 null）

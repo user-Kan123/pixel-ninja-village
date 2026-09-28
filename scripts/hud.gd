@@ -102,18 +102,33 @@ func _draw_weapons(font: Font, x: float, y: float) -> void:
 		if id.is_empty():
 			draw_string(font, r.position + Vector2(14.0, 38.0), Data.s("loadout.empty"), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.5, 0.5, 0.52))
 			continue
-		Data.draw_weapon_icon(self, id, r.position + Vector2(32.0, h / 2.0), 18.0)
-		draw_string(font, r.position + Vector2(58.0, 26.0), Data.weapon_name(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COL_TEXT if active else COL_DIM)
-		draw_string(font, r.position + Vector2(58.0, 46.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.62, 0.62, 0.68))
-		var mx := player.ammo_max(id)
-		if mx > 0:
-			var cur := player.ammo_count(id)
-			var acol := Color("e0c447") if cur > 0 else Color(0.6, 0.6, 0.62)
-			draw_string(font, Vector2(r.position.x, r.position.y + 42.0), "x %d / %d" % [cur, mx],
-				HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 10.0, 15, acol)
-	if player.weapon_slots.size() > 1:
+		Data.draw_item_icon(self, id, r.position + Vector2(32.0, h / 2.0 - 3.0), 18.0)
+		draw_string(font, r.position + Vector2(58.0, 24.0), Data.weapon_name(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COL_TEXT if active else COL_DIM)
+		draw_string(font, r.position + Vector2(58.0, 44.0), Data.weapon_mode(id), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.62, 0.62, 0.68))
+		## 右上角：这一格里还剩几个（投掷余量）
+		var cnt := player.weapon_count(i)
+		var acol := Color("e0c447") if cnt > 0 else Color(0.6, 0.6, 0.62)
+		draw_string(font, Vector2(r.position.x, r.position.y + 22.0), "x %d" % cnt,
+			HORIZONTAL_ALIGNMENT_RIGHT, r.size.x - 10.0, 15, acol)
+		## 底部耐久条：只对近战会磨损的忍具显示
+		var dr := player.weapon_dur_ratio(i)
+		if dr >= 0.0:
+			var bar := Rect2(r.position.x + 8.0, r.end.y - 11.0, r.size.x - 16.0, 5.0)
+			draw_rect(bar, Color(0, 0, 0, 0.7))
+			draw_rect(Rect2(bar.position.x + 1.0, bar.position.y + 1.0, (bar.size.x - 2.0) * dr, 3.0), _dur_color(dr))
+			draw_rect(bar, Color(0.1, 0.1, 0.1, 0.85), false, 1.0)
+	if Player.WEAPON_SLOT_COUNT > 1:
 		draw_string(font, Vector2(x, y + 2.0 * (h + gap) + 16.0), Data.s("hud.weapon_switch"),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.42))
+
+
+## 耐久条颜色：绿 → 黄 → 红
+func _dur_color(ratio: float) -> Color:
+	if ratio > 0.5:
+		return Color(0.45, 0.85, 0.5)
+	if ratio > 0.25:
+		return Color(0.92, 0.8, 0.35)
+	return Color(0.9, 0.4, 0.35)
 
 
 func _draw_jutsu_slots(font: Font) -> void:

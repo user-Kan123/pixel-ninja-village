@@ -1,0 +1,29 @@
+{
+  "hyorogan": {
+    "name_key": "item.hyorogan",
+    "desc_key": "item.hyorogan.desc",
+    "type": "consumable",
+    "price": 20,
+    "stack": 16,
+    "heal": 25,
+    "chakra": 25
+  },
+  "heal_pill": {
+    "name_key": "item.heal_pill",
+    "desc_key": "item.heal_pill.desc",
+    "type": "consumable",
+    "price": 0,
+    "stack": 16,
+    "heal": 30,
+    "chakra": 0
+  },
+  "chakra_pill": {
+    "name_key": "item.chakra_pill",
+    "desc_key": "item.chakra_pill.desc",
+    "type": "consumable",
+    "price": 0,
+    "stack": 16,
+    "heal": 0,
+    "chakra": 35
+  }
+}

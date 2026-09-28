@@ -22,7 +22,8 @@ const MOVE_SPEED := 198.0
 const CHAKRA_REGEN := 9.0
 ## 武器槽：主手 + 副手，Q 切换。空字符串 = 该槽没装忍具。
 const WEAPON_SLOT_COUNT := 2
-const DEFAULT_WEAPON_SLOTS := ["kunai", ""]
+## 近战每命中一次扣的耐久
+const MELEE_WEAR := 1.0
 
 ## 鼠标跟随移动（主操作方式）
 const MOUSE_DEAD_ZONE := 24.0   ## 鼠标离人物多近算"站住"（贴到身上即停）
@@ -63,12 +64,10 @@ var max_chakra := MAX_CHAKRA_BASE
 var hp := MAX_HP_BASE
 var chakra := MAX_CHAKRA_BASE
 
-## 武器槽（主手 / 副手）。Q 切换当前使用的槽；每个忍具的弹药与回手各自独立。
-var weapon_slots: Array[String] = []
+## 武器槽（主手 / 副手）：存的是**背包格编号 sid**（-1 = 空槽）。
+## 指向格子而不是武器 id，才能区分"背包里三把短刀中正在用的那一把"。
+var weapon_sids: Array[int] = []
 var active_weapon := 0
-## 投掷忍具的余量与回手计时：weapon_id → 数量 / 已积累秒数
-var ammo: Dictionary = {}
-var ammo_recharge: Dictionary = {}
 ## 忍具用法不匹配（不能近战 / 不能投掷 / 没余量）时的提示节流
 var weapon_hint_t := 0.0
 
@@ -152,8 +151,8 @@ func _ready() -> void:
 	add_to_group("player")
 	for id in DEFAULT_LOADOUT:
 		jutsu_slots.append(String(id))
-	for id in DEFAULT_WEAPON_SLOTS:
-		weapon_slots.append(String(id))
+	while weapon_sids.size() < WEAPON_SLOT_COUNT:
+		weapon_sids.append(-1)
 	for id in Data.jutsu:
 		jutsu_cd[id] = 0.0
 	var col := CollisionShape2D.new()
@@ -178,9 +177,20 @@ func weapon_id() -> String:
 
 
 func weapon_at(slot: int) -> String:
-	if slot < 0 or slot >= weapon_slots.size():
-		return ""
-	return String(weapon_slots[slot])
+	var st := weapon_stack(slot)
+	return String(st.get("id", "")) if not st.is_empty() else ""
+
+
+func weapon_sid_at(slot: int) -> int:
+	if slot < 0 or slot >= weapon_sids.size():
+		return -1
+	return weapon_sids[slot]
+
+
+## 某个武器槽指向的背包格（槽空着返回 {}）
+func weapon_stack(slot: int) -> Dictionary:
+	var sid := weapon_sid_at(slot)
+	return Flow.inv_find(sid) if sid >= 0 else {}
 
 
 ## 传空串取当前手持忍具的配置；传 id 取指定忍具的配置。
@@ -206,83 +216,166 @@ func melee_arc() -> float:
 	return MELEE_ARC * float(weapon_cfg().get("melee_arc_mult", 1.0))
 
 
-func ammo_max(wid: String) -> int:
-	return int(Data.weapon(wid).get("throw_max", 0))
+## 这个武器槽里还剩几个（= 背包里那一格的数量，投掷就靠它）
+func weapon_count(slot := -1) -> int:
+	var st := weapon_stack(active_weapon if slot < 0 else slot)
+	return int(st.get("count", 0)) if not st.is_empty() else 0
 
 
-## 投掷余量：首次访问按携带上限填满（懒初始化，省得关心装备顺序）
-func ammo_count(wid := "") -> int:
-	var id := wid if not wid.is_empty() else weapon_id()
-	if id.is_empty():
-		return 0
-	var mx := ammo_max(id)
-	if mx <= 0:
-		return 0
-	if not ammo.has(id):
-		ammo[id] = mx
-	return int(ammo[id])
+## 这个武器槽的耐久比例（0~1）；没有耐久概念的忍具返回 -1
+func weapon_dur_ratio(slot := -1) -> float:
+	var st := weapon_stack(active_weapon if slot < 0 else slot)
+	if st.is_empty():
+		return -1.0
+	var mx := Data.item_durability(String(st["id"]))
+	if mx <= 0.0:
+		return -1.0
+	return clampf(float(st.get("dur", 0.0)) / mx, 0.0, 1.0)
 
 
 func _ensure_weapon_slots() -> void:
-	while weapon_slots.size() < WEAPON_SLOT_COUNT:
-		weapon_slots.append("")
+	while weapon_sids.size() < WEAPON_SLOT_COUNT:
+		weapon_sids.append(-1)
 
 
-## 装配武器：同一件忍具不会同时占两个槽（与忍术装配同一套规则）
+## 按武器 id 装到槽上（装背包里第一格该武器）；传空串 = 卸下该槽
 func equip_weapon(slot: int, id: String) -> void:
+	equip_sid(slot, -1 if id.is_empty() else Flow.first_sid_of(id))
+
+
+## 直接指定背包格装到槽上：界面上点哪一把就是哪一把
+func equip_sid(slot: int, sid: int) -> void:
 	_ensure_weapon_slots()
 	if slot < 0 or slot >= WEAPON_SLOT_COUNT:
 		return
-	if not id.is_empty():
-		if not Flow.owns_weapon(id):
+	if sid >= 0:
+		var st := Flow.inv_find(sid)
+		if st.is_empty() or not Data.is_weapon(String(st["id"])):
 			return
-		for i in weapon_slots.size():
-			if weapon_slots[i] == id:
-				weapon_slots[i] = ""
-	weapon_slots[slot] = id
-	if not id.is_empty():
-		ammo_count(id)
-	_sync_active_weapon()
+		## 同一个背包格不会被两个槽同时指着
+		for i in weapon_sids.size():
+			if weapon_sids[i] == sid:
+				weapon_sids[i] = -1
+	weapon_sids[slot] = sid
+	Flow.equip_sid(slot, sid)
+	sync_active_weapon()
 
 
 ## 当前槽空了就自动切到另一个有忍具的槽
-func _sync_active_weapon() -> void:
-	if not weapon_at(active_weapon).is_empty():
+func sync_active_weapon() -> void:
+	if not weapon_stack(active_weapon).is_empty():
 		return
-	for i in weapon_slots.size():
-		if not weapon_slots[i].is_empty():
+	for i in weapon_sids.size():
+		if not weapon_stack(i).is_empty():
 			active_weapon = i
 			return
 
 
 ## Q 切换主/副手；另一槽为空时返回空串（不切）
 func switch_weapon() -> String:
-	if weapon_slots.size() < 2:
+	if weapon_sids.size() < 2:
 		return ""
-	var other := (active_weapon + 1) % weapon_slots.size()
-	if weapon_at(other).is_empty():
+	var other := (active_weapon + 1) % weapon_sids.size()
+	if weapon_stack(other).is_empty():
 		return ""
 	active_weapon = other
 	return weapon_at(other)
 
 
-## 投掷忍具的回手：每个槽各自累计，装满即停
-func _tick_ammo(delta: float) -> void:
-	for i in weapon_slots.size():
-		var id := String(weapon_slots[i])
-		var mx := ammo_max(id)
-		if mx <= 0:
+## 每帧对齐背包：槽里指着的格子消失了（扔完 / 用坏）就卸下，再从背包里补一件
+func _verify_weapons() -> void:
+	_ensure_weapon_slots()
+	var changed := false
+	for i in weapon_sids.size():
+		var sid := weapon_sids[i]
+		if sid >= 0 and Flow.inv_index(sid) < 0:
+			weapon_sids[i] = -1
+			changed = true
+	if changed:
+		_auto_equip_from_bag()
+
+
+## 从背包里挑武器补到空槽上
+func _auto_equip_from_bag() -> void:
+	for i in weapon_sids.size():
+		if weapon_sids[i] >= 0:
 			continue
-		if not ammo.has(id):
-			ammo[id] = mx
-		if int(ammo[id]) >= mx:
-			ammo_recharge[id] = 0.0
+		for st in Flow.inventory:
+			if not Data.is_weapon(String(st["id"])):
+				continue
+			var sid := int(st["sid"])
+			var taken := false
+			for j in weapon_sids.size():
+				if weapon_sids[j] == sid:
+					taken = true
+					break
+			if taken:
+				continue
+			weapon_sids[i] = sid
+			break
+	sync_active_weapon()
+
+
+## 近战命中后磨损手里的忍具。耐久归零：堆叠物消耗掉一个，单件直接报废消失。
+func wear_weapon() -> void:
+	var slot := active_weapon
+	var sid := weapon_sid_at(slot)
+	if sid < 0:
+		return
+	var st := weapon_stack(slot)
+	if st.is_empty():
+		return
+	var id := String(st["id"])
+	if Data.item_durability(id) <= 0.0:
+		return
+	match Flow.inv_wear(sid, MELEE_WEAR):
+		"broken":
+			notify_weapon(Data.s("hud.weapon_broken") % Data.item_name(id))
+		"gone":
+			notify_weapon(Data.s("hud.weapon_stack_out") % Data.item_name(id))
+			_verify_weapons()
+
+
+## 吃掉背包里第一个能用的消耗品（F 键）；返回是否真的吃了
+func use_best_consumable() -> bool:
+	for st in Flow.inventory:
+		var id := String(st["id"])
+		if not Data.is_consumable(id):
 			continue
-		var rec := maxf(float(Data.weapon(id).get("throw_recharge", 3.0)), 0.1)
-		ammo_recharge[id] = float(ammo_recharge.get(id, 0.0)) + delta
-		while float(ammo_recharge[id]) >= rec and int(ammo[id]) < mx:
-			ammo_recharge[id] = float(ammo_recharge[id]) - rec
-			ammo[id] = int(ammo[id]) + 1
+		if use_item(int(st["sid"])):
+			return true
+		## 找到道具但用不了（满状态）—— use_item 自己已经提示过，这里不要再刷一条
+		return false
+	_weapon_hint("hud.nothing_to_use")
+	return false
+
+
+## 使用某一格道具：回体力 / 回查克拉，然后扣掉一个
+func use_item(sid: int) -> bool:
+	var st := Flow.inv_find(sid)
+	if st.is_empty():
+		return false
+	var id := String(st["id"])
+	var d: Dictionary = Data.item_def(id)
+	if String(d.get("type", "")) != "consumable":
+		return false
+	var heal := float(d.get("heal", 0.0))
+	var chakra_gain := float(d.get("chakra", 0.0))
+	## 满血满蓝就不浪费道具
+	if hp >= max_hp and chakra >= max_chakra:
+		_weapon_hint("hud.item_full")
+		return false
+	hp = minf(hp + heal, max_hp)
+	chakra = minf(chakra + chakra_gain, max_chakra)
+	Flow.inv_take(sid, 1)
+	var parts: Array = []
+	if heal > 0.0:
+		parts.append("%s +%d" % [Data.s("item.stat.heal"), int(heal)])
+	if chakra_gain > 0.0:
+		parts.append("%s +%d" % [Data.s("item.stat.chakra"), int(chakra_gain)])
+	notify_weapon("%s · %s" % [Data.s("hud.used_item") % Data.item_name(id), " ".join(PackedStringArray(parts))])
+	Fx.burst(game.fx_container, global_position, Color(0.6, 0.95, 0.65, 0.85), 8, 140.0)
+	return true
 
 
 ## 忍具装配变更后的 HUD 反馈
@@ -352,6 +445,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			var switched := switch_weapon()
 			if not switched.is_empty():
 				notify_weapon(Data.s("hud.weapon_switched") % Data.weapon_name(switched))
+			return
+		if event.keycode == KEY_F and event.pressed:
+			## F：吃背包里第一个可用的道具（兵粮丸 / 回力药 / 查克拉药）
+			use_best_consumable()
 			return
 		if event.keycode == KEY_F1 and event.pressed:
 			## 测试模式开关：全忍术 / 5 个忍术槽全解锁（装配界面打开时由 LoadoutUi 接管，那边游戏暂停）
@@ -484,7 +581,8 @@ func _physics_process(delta: float) -> void:
 	if not dead:
 		var regen := CHAKRA_REGEN * _passive_mult("chakra_flow", "chakra_regen_mult", 1.0)
 		chakra = minf(chakra + regen * delta, max_chakra)
-		_tick_ammo(delta)
+	## 背包是唯一事实来源：槽里指着的格子没了就卸下
+	_verify_weapons()
 	weapon_hint_t = maxf(weapon_hint_t - delta, 0.0)
 	if combo_timer > 0.0:
 		combo_timer -= delta
@@ -553,8 +651,11 @@ func _request_attack() -> void:
 		## 手持丸子期间双手被占用，不能出刀
 		return
 	if not can_melee():
-		## 手里剑这类只能投掷的忍具：左键不出刀，提示改用右键
-		_weapon_hint("hud.no_melee")
+		## 手上空着 → 提示去背包装；手里剑这类只能投掷的 → 提示改用右键
+		if weapon_id().is_empty():
+			_weapon_hint("hud.no_weapon")
+		else:
+			_weapon_hint("hud.no_melee")
 		return
 	if state == State.MOVE:
 		_start_attack(1)
@@ -563,12 +664,16 @@ func _request_attack() -> void:
 			attack_buffered = true
 
 
-## 用法不匹配的提示：1.5 秒内只弹一次，避免连点刷屏
+## 用法不匹配 / 手上没东西的提示：1.5 秒内只弹一次，避免连点刷屏
 func _weapon_hint(key: String) -> void:
+	_weapon_hint_text(Data.s(key))
+
+
+func _weapon_hint_text(text: String) -> void:
 	if weapon_hint_t > 0.0:
 		return
 	weapon_hint_t = 1.5
-	notify_weapon(Data.s(key))
+	notify_weapon(text)
 
 
 ## 当前忍具下这一段的连招参数：伤害乘忍具倍率，前摇/判定/收招按攻速缩放
@@ -638,22 +743,29 @@ func _do_melee_hit() -> void:
 		combo_count += 1
 		combo_timer = 1.2
 		game.hitstop(float(attack_step.hitstop))
+		## 打中了才磨损：砍空不该让刀变钝
+		wear_weapon()
 
 
-## 投掷当前忍具。伤害/速度/携带量/回手间隔全部来自 weapon.json：
-## 手里剑 = 伤害低但出手快、携带多；苦无 = 伤害中等、回手一般。
+## 投掷当前忍具。**真消耗品**：扔出去就从背包扣掉一个，扔完手上就空了。
+## 伤害 / 速度来自 weapon.json：手里剑伤害低但飞得快，苦无伤害中等。
 func _throw_weapon(target: Vector2) -> void:
 	if orb_active:
+		return
+	var slot := active_weapon
+	var sid := weapon_sid_at(slot)
+	if sid < 0:
+		_weapon_hint("hud.no_weapon")
 		return
 	var id := weapon_id()
 	var w := weapon_cfg()
 	if not bool(w.get("can_throw", false)):
 		_weapon_hint("hud.no_throw")
 		return
-	if ammo_count(id) <= 0:
-		_weapon_hint("hud.no_ammo")
+	if weapon_count(slot) <= 0:
+		_weapon_hint_text(Data.s("hud.no_ammo") % Data.item_name(id))
 		return
-	ammo[id] = int(ammo[id]) - 1
+	Flow.inv_take(sid, 1)
 	var dir := (target - global_position).normalized()
 	if dir == Vector2.ZERO:
 		dir = Vector2.RIGHT
@@ -668,6 +780,11 @@ func _throw_weapon(target: Vector2) -> void:
 		"color": Color("c9ced6") if is_shuriken else Color("e8e2d2"),
 		"game": game,
 	})
+	## 这一格扔空了：卸下这个槽，再从背包里补一件别的武器
+	if weapon_count(slot) <= 0:
+		weapon_sids[slot] = -1
+		notify_weapon(Data.s("hud.weapon_stack_out") % Data.item_name(id))
+		_auto_equip_from_bag()
 
 
 # ---------------------------------------------------------------- 施法入口
@@ -1164,7 +1281,7 @@ func _draw() -> void:
 	var wid := weapon_id()
 	if not wid.is_empty() and not orb_active:
 		var hand := NINJA_ANCHOR + Vector2(0.0, 15.0) + aim * 11.0 + perp * 9.0
-		Data.draw_weapon_icon(self, wid, hand, 8.0)
+		Data.draw_item_icon(self, wid, hand, 8.0)
 	## buff 蓝色光环
 	if buff_timer > 0.0:
 		var pulse := 0.5 + 0.5 * sin(buff_timer * 14.0)

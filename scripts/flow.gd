@@ -1,15 +1,30 @@
 extends Node
-## 全局流程：场景切换（村庄 ↔ 战场）、任务状态、金钱、天数、存档。
+## 全局流程：场景切换（村庄 ↔ 战场）、任务状态、金钱、天数、**背包**、存档。
 ## 持久进度存在这里，玩家只是"当前会话里的执行者"；跨场景与存档都由本节点统一处理。
+##
+## 背包模型（v0.8 起）：
+##   背包 = 固定 24 个格子，每格是一"堆"：{sid, id, count, dur}
+##   - sid 是稳定编号，武器槽指向 sid（不是 id），所以"装的是哪一把短刀"不会认错
+##   - 手里剑 / 苦无 / 兵粮丸 可堆叠（每组 16），堆叠物没有独立耐久
+##   - 苦无的近战磨损算在"当前这一把"上：耐久归零 → 消耗 1 个 → 换下一把
+##   - 短刀 / 长剑 不可堆叠（每组 1），每一把各自带耐久，用坏了就消失
+##   投掷 = 直接从背包扣 1 个（真消耗品），战斗中不会自动补充
 
 const SAVE_PATH := "user://pnv_save.json"
 const DEFAULT_LOADOUT := ["blink", "fireball", "great_fireball", "thunder_dash", "shadow_clones"]
-## 开局自带一件苦无（能近战能投掷，容错最高），其余忍具去忍具店买
-const DEFAULT_OWNED_WEAPONS := ["kunai"]
-const DEFAULT_WEAPON_SLOTS := ["kunai", ""]
+
+## 武器槽：主手 + 副手，Q 切换
 const WEAPON_SLOT_COUNT := 2
-## 开局给的少量金钱（原始构想：降生时给一间公寓和少量钱）
+## 背包格数（界面按 6 列 × 4 行摆）
+const INV_SLOTS := 24
+## 开局发的少量金钱（原始构想：降生时给一间公寓和少量钱）
 const START_MONEY := 150
+## 开局背包：8 把苦无 + 6 枚手里剑 + 3 颗兵粮丸，够打两趟 D 级任务
+const DEFAULT_KIT := [
+	{"id": "kunai", "count": 8},
+	{"id": "shuriken", "count": 6},
+	{"id": "hyorogan", "count": 3},
+]
 
 ## 持久进度
 var level := 1
@@ -17,9 +32,11 @@ var xp := 0
 var money := 0
 var day := 1
 var loadout: Array[String] = []
-## 已购买的忍具（背包内容）与两个武器槽上的忍具
-var owned_weapons: Array[String] = []
-var weapon_slots: Array[String] = []
+## 背包格（每格 {sid, id, count, dur}）与自增编号
+var inventory: Array = []
+var inv_next_sid := 1
+## 每个武器槽指向的背包格编号（-1 = 空槽）
+var weapon_sids: Array[int] = []
 var missions_done := {}
 var unlocked_jutsu: Array[String] = []
 
@@ -45,15 +62,19 @@ func toggle_test_mode() -> bool:
 func _ready() -> void:
 	for id in DEFAULT_LOADOUT:
 		loadout.append(String(id))
-	for id in DEFAULT_OWNED_WEAPONS:
-		owned_weapons.append(String(id))
-	for id in DEFAULT_WEAPON_SLOTS:
-		weapon_slots.append(String(id))
 	for id in Data.jutsu_list:
 		unlocked_jutsu.append(String(id))
+	_ensure_weapon_slots()
 	if not load_save():
-		## 全新存档：发开局的少量金钱
+		## 全新存档：发开局的钱与装备
 		money = START_MONEY
+		grant_default_kit()
+	_ensure_equipped_weapons()
+
+
+func _ensure_weapon_slots() -> void:
+	while weapon_sids.size() < WEAPON_SLOT_COUNT:
+		weapon_sids.append(-1)
 
 
 # ---------------------------------------------------------------- 场景与任务
@@ -108,6 +129,247 @@ func mission_done_count(id: String) -> int:
 	return int(missions_done.get(id, 0))
 
 
+# ---------------------------------------------------------------- 背包
+
+func _new_stack(id: String, count: int) -> Dictionary:
+	var st := {
+		"sid": inv_next_sid,
+		"id": id,
+		"count": count,
+		## 耐久是"这一件"的，堆叠物按当前这一件算
+		"dur": Data.item_durability(id),
+	}
+	inv_next_sid += 1
+	return st
+
+
+func inv_index(sid: int) -> int:
+	for i in inventory.size():
+		if int(inventory[i].get("sid", -1)) == sid:
+			return i
+	return -1
+
+
+## 按 sid 取格子（返回的是字典引用，可以直接改）
+func inv_find(sid: int) -> Dictionary:
+	var i := inv_index(sid)
+	return inventory[i] if i >= 0 else {}
+
+
+func inv_used() -> int:
+	return inventory.size()
+
+
+func inv_free() -> int:
+	return INV_SLOTS - inventory.size()
+
+
+## 背包里某种东西的总数（不传 id 就返回所有格子数）
+func inv_total(id := "") -> int:
+	if id.is_empty():
+		return inventory.size()
+	var n := 0
+	for st in inventory:
+		if String(st["id"]) == id:
+			n += int(st["count"])
+	return n
+
+
+## 背包里还有几个位置能放这种 id
+func inv_space_for(id: String) -> int:
+	var max_stack := Data.item_stack(id)
+	var room := inv_free() * max_stack
+	if max_stack > 1:
+		for st in inventory:
+			if String(st["id"]) == id:
+				room += maxi(max_stack - int(st["count"]), 0)
+	return room
+
+
+## 放入物品，返回实际放进去的数量（背包满了就放不满）
+func inv_add(id: String, count := 1) -> int:
+	if not Data.has_item(id) or count <= 0:
+		return 0
+	var max_stack := Data.item_stack(id)
+	var left := count
+	if max_stack > 1:
+		## 先填已有的同类未满堆
+		for st in inventory:
+			if left <= 0:
+				break
+			if String(st["id"]) != id:
+				continue
+			var room := max_stack - int(st["count"])
+			if room <= 0:
+				continue
+			var put := mini(room, left)
+			st["count"] = int(st["count"]) + put
+			left -= put
+	## 再开新格
+	while left > 0 and inventory.size() < INV_SLOTS:
+		var put2 := mini(max_stack, left)
+		inventory.append(_new_stack(id, put2))
+		left -= put2
+	return count - left
+
+
+## 从某个格子取出，返回实际取出的数量；取空了这个格子就消失
+func inv_take(sid: int, count := 1) -> int:
+	var idx := inv_index(sid)
+	if idx < 0:
+		return 0
+	var st: Dictionary = inventory[idx]
+	var take := mini(count, int(st["count"]))
+	st["count"] = int(st["count"]) - take
+	if int(st["count"]) <= 0:
+		inventory.remove_at(idx)
+		_unequip_sid(sid)
+	return take
+
+
+## 扣掉当前这一件的耐久；耐久归零就消耗掉它
+## 返回 "ok"（还在用） / "broken"（这一件报废但堆里还有） / "gone"（格子空了）
+func inv_wear(sid: int, amount := 1.0) -> String:
+	var st := inv_find(sid)
+	if st.is_empty():
+		return "gone"
+	var dur := float(st.get("dur", 0.0))
+	if dur <= 0.0:
+		return "ok"
+	dur -= amount
+	if dur > 0.0:
+		st["dur"] = dur
+		return "ok"
+	st["dur"] = Data.item_durability(String(st["id"]))
+	if inv_take(sid, 1) <= 0:
+		return "gone"
+	return "broken" if inv_index(sid) >= 0 else "gone"
+
+
+## 开局那套基础装备（新档 / 老档迁移都用它）
+func grant_default_kit() -> void:
+	for entry in DEFAULT_KIT:
+		inv_add(String(entry["id"]), int(entry["count"]))
+
+
+# ---------------------------------------------------------------- 武器槽
+
+func sid_of_slot(slot: int) -> int:
+	if slot < 0 or slot >= weapon_sids.size():
+		return -1
+	return weapon_sids[slot]
+
+
+## 武器槽指向某个背包格；同一个格子不会被两个槽同时指着
+func equip_sid(slot: int, sid: int) -> bool:
+	_ensure_weapon_slots()
+	if slot < 0 or slot >= WEAPON_SLOT_COUNT:
+		return false
+	if sid >= 0:
+		if inv_index(sid) < 0 or not Data.is_weapon(String(inv_find(sid)["id"])):
+			return false
+		for i in weapon_sids.size():
+			if weapon_sids[i] == sid:
+				weapon_sids[i] = -1
+	weapon_sids[slot] = sid
+	save_game()
+	return true
+
+
+## 武器 id → 背包里第一格该武器的 sid（找不到返回 -1）
+func first_sid_of(id: String) -> int:
+	for st in inventory:
+		if String(st["id"]) == id:
+			return int(st["sid"])
+	return -1
+
+
+func _unequip_sid(sid: int) -> void:
+	for i in weapon_sids.size():
+		if weapon_sids[i] == sid:
+			weapon_sids[i] = -1
+
+
+## 两个槽都空（或指向的格子没了）时，从背包里自动挑武器装上
+func _ensure_equipped_weapons() -> void:
+	_ensure_weapon_slots()
+	for i in weapon_sids.size():
+		if weapon_sids[i] >= 0 and inv_index(weapon_sids[i]) < 0:
+			weapon_sids[i] = -1
+	var used := {}
+	for i in weapon_sids.size():
+		if weapon_sids[i] >= 0:
+			used[weapon_sids[i]] = true
+	for i in weapon_sids.size():
+		if weapon_sids[i] >= 0:
+			continue
+		for st in inventory:
+			var sid := int(st["sid"])
+			if used.has(sid) or not Data.is_weapon(String(st["id"])):
+				continue
+			weapon_sids[i] = sid
+			used[sid] = true
+			break
+
+
+## 兼容旧接口：背包里有没有这件忍具
+func owns_weapon(id: String) -> bool:
+	return first_sid_of(id) >= 0
+
+
+# ---------------------------------------------------------------- 忍具店
+
+## 购买：qty 是想买几个，实际数量受赏金与背包空间限制
+## 返回 {ok, reason, bought, want, cost, name}
+## reason: ""（足量）/ "partial"（只买到一部分）/ "no_money" / "no_space" / "unknown"
+func buy_item(id: String, qty := 1) -> Dictionary:
+	var d: Dictionary = Data.item_def(id)
+	var base := {"ok": false, "reason": "unknown", "bought": 0, "want": qty, "cost": 0, "name": id}
+	if d.is_empty():
+		return base
+	var price := Data.item_price(id)
+	var iname := Data.item_name(id)
+	if price <= 0 or qty <= 0:
+		base["name"] = iname
+		return base
+	var affordable := int(money / price)
+	var space := inv_space_for(id)
+	var want := mini(qty, mini(affordable, space))
+	if want <= 0:
+		base["reason"] = "no_money" if affordable <= 0 else "no_space"
+		base["name"] = iname
+		base["shortfall"] = maxi(price - money, 0)
+		return base
+	money -= want * price
+	inv_add(id, want)
+	## 买到武器时顺手补一个空武器槽，省得再进背包里点一次
+	if Data.is_weapon(id):
+		_auto_equip_new_weapon(id)
+	save_game()
+	return {
+		"ok": true,
+		"reason": "" if want >= qty else "partial",
+		"bought": want,
+		"want": qty,
+		"cost": want * price,
+		"name": iname,
+	}
+
+
+func _auto_equip_new_weapon(id: String) -> void:
+	_ensure_weapon_slots()
+	var sid := first_sid_of(id)
+	if sid < 0:
+		return
+	for i in weapon_sids.size():
+		if weapon_sids[i] == sid:
+			return
+	for i in weapon_sids.size():
+		if weapon_sids[i] < 0:
+			weapon_sids[i] = sid
+			return
+
+
 # ---------------------------------------------------------------- 与玩家的进度同步
 
 func sync_from_player(p) -> void:
@@ -116,9 +378,9 @@ func sync_from_player(p) -> void:
 	loadout.clear()
 	for id in p.jutsu_slots:
 		loadout.append(String(id))
-	weapon_slots.clear()
+	weapon_sids.clear()
 	for i in range(WEAPON_SLOT_COUNT):
-		weapon_slots.append(String(p.weapon_at(i)))
+		weapon_sids.append(int(p.weapon_sid_at(i)))
 	save_game()
 
 
@@ -133,55 +395,12 @@ func apply_to_player(p) -> void:
 	p.jutsu_slots.clear()
 	for id in loadout:
 		p.jutsu_slots.append(String(id))
-	p.weapon_slots.clear()
+	_ensure_equipped_weapons()
+	p.weapon_sids.clear()
 	for i in range(WEAPON_SLOT_COUNT):
-		var wid := String(weapon_slots[i]) if i < weapon_slots.size() else ""
-		## 存档里可能有已经不在商店里的忍具 id，这里兜底过滤掉
-		if not wid.is_empty() and not Data.weapons.has(wid):
-			wid = ""
-		p.weapon_slots.append(wid)
+		p.weapon_sids.append(sid_of_slot(i))
 	p.active_weapon = 0
-	## 兜底：两个武器槽都空（老存档 / 极端情况）时发一把苦无，别让玩家完全没有攻击手段
-	var has_any_weapon := false
-	for wid in p.weapon_slots:
-		if not String(wid).is_empty():
-			has_any_weapon = true
-			break
-	if not has_any_weapon:
-		p.weapon_slots[0] = "kunai"
-	p._sync_active_weapon()
-
-
-# ---------------------------------------------------------------- 忍具商店
-
-func owns_weapon(id: String) -> bool:
-	return owned_weapons.has(id)
-
-
-## 购买忍具：返回 {ok, reason, price, shortfall, name}
-## reason: "owned"（已拥有） / "no_money"（赏金不足） / "unknown"（没有这件忍具）
-func buy_weapon(id: String) -> Dictionary:
-	var w: Dictionary = Data.weapon(id)
-	if w.is_empty():
-		return {"ok": false, "reason": "unknown", "price": 0, "shortfall": 0, "name": id}
-	var price := int(w.get("price", 0))
-	var wname := Data.weapon_name(id)
-	if owns_weapon(id):
-		return {"ok": false, "reason": "owned", "price": price, "shortfall": 0, "name": wname}
-	if money < price:
-		return {"ok": false, "reason": "no_money", "price": price, "shortfall": price - money, "name": wname}
-	money -= price
-	owned_weapons.append(id)
-	## 买到手就自动装进第一个空武器槽，省得再去界面里点一次
-	for i in range(WEAPON_SLOT_COUNT):
-		var cur := String(weapon_slots[i]) if i < weapon_slots.size() else ""
-		if cur.is_empty():
-			while weapon_slots.size() <= i:
-				weapon_slots.append("")
-			weapon_slots[i] = id
-			break
-	save_game()
-	return {"ok": true, "reason": "", "price": price, "shortfall": 0, "name": wname}
+	p.sync_active_weapon()
 
 
 # ---------------------------------------------------------------- 存档
@@ -193,8 +412,9 @@ func save_game() -> void:
 		"money": money,
 		"day": day,
 		"loadout": Array(loadout),
-		"owned_weapons": Array(owned_weapons),
-		"weapon_slots": Array(weapon_slots),
+		"inventory": inventory,
+		"inv_next_sid": inv_next_sid,
+		"weapon_sids": Array(weapon_sids),
 		"missions_done": missions_done,
 	}
 	var file := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -222,33 +442,67 @@ func load_save() -> bool:
 		loadout.clear()
 		for id in lo:
 			loadout.append(String(id))
-	## Data.weapons 为空说明数据表还没就绪，此时不做 id 校验，避免把存档读空
-	var has_weapon_table := not Data.weapons.is_empty()
-	var ow: Array = parsed.get("owned_weapons", [])
-	if not ow.is_empty():
-		owned_weapons.clear()
-		for id in ow:
-			var wid := String(id)
-			if (not has_weapon_table or Data.weapons.has(wid)) and not owned_weapons.has(wid):
-				owned_weapons.append(wid)
-	if owned_weapons.is_empty():
-		for id in DEFAULT_OWNED_WEAPONS:
-			owned_weapons.append(String(id))
-	var ws: Array = parsed.get("weapon_slots", [])
-	if not ws.is_empty():
-		weapon_slots.clear()
-		for i in range(WEAPON_SLOT_COUNT):
-			var wid2 := String(ws[i]) if i < ws.size() else ""
-			if has_weapon_table and not wid2.is_empty() and not Data.weapons.has(wid2):
-				wid2 = ""
-			weapon_slots.append(wid2)
-	if weapon_slots.is_empty():
-		for id in DEFAULT_WEAPON_SLOTS:
-			weapon_slots.append(String(id))
+	_load_inventory(parsed)
+	_load_weapon_sids(parsed)
 	var md: Variant = parsed.get("missions_done", {})
 	if md is Dictionary:
 		missions_done = md
 	return true
+
+
+func _load_inventory(parsed: Dictionary) -> void:
+	inventory.clear()
+	## Data 表还没就绪时不做 id 校验，免得把存档读空
+	var has_item_table := not Data.weapons.is_empty() or not Data.items.is_empty()
+	var raw: Array = parsed.get("inventory", [])
+	var max_sid := 0
+	for e in raw:
+		if not e is Dictionary:
+			continue
+		var iid := String(e.get("id", ""))
+		if has_item_table and not Data.has_item(iid):
+			continue
+		var sid := int(e.get("sid", 0))
+		var cnt := maxi(int(e.get("count", 1)), 1)
+		var st := {
+			"sid": sid,
+			"id": iid,
+			"count": cnt,
+			"dur": float(e.get("dur", Data.item_durability(iid))),
+		}
+		inventory.append(st)
+		max_sid = maxi(max_sid, sid)
+	inv_next_sid = maxi(int(parsed.get("inv_next_sid", 1)), max_sid + 1)
+	## 老存档（v0.7 及以前没有背包）迁移：把 owned_weapons 变成背包格
+	if inventory.is_empty():
+		var owned: Array = parsed.get("owned_weapons", [])
+		if owned.is_empty():
+			return
+		for id in owned:
+			var wid := String(id)
+			if has_item_table and not Data.has_item(wid):
+				continue
+			## 投掷类给一小把，近战类给一把
+			inv_add(wid, 4 if Data.item_stack(wid) > 1 else 1)
+
+
+func _load_weapon_sids(parsed: Dictionary) -> void:
+	_ensure_weapon_slots()
+	for i in weapon_sids.size():
+		weapon_sids[i] = -1
+	var raw: Array = parsed.get("weapon_sids", [])
+	if not raw.is_empty():
+		for i in range(WEAPON_SLOT_COUNT):
+			var sid := int(raw[i]) if i < raw.size() else -1
+			if sid >= 0 and inv_index(sid) < 0:
+				sid = -1
+			weapon_sids[i] = sid
+		return
+	## v0.7 存档里 weapon_slots 存的是武器 id
+	var old: Array = parsed.get("weapon_slots", [])
+	for i in range(WEAPON_SLOT_COUNT):
+		var wid := String(old[i]) if i < old.size() else ""
+		weapon_sids[i] = first_sid_of(wid) if not wid.is_empty() else -1
 
 
 func reset_save() -> void:
@@ -259,12 +513,13 @@ func reset_save() -> void:
 	loadout.clear()
 	for id in DEFAULT_LOADOUT:
 		loadout.append(String(id))
-	owned_weapons.clear()
-	for id in DEFAULT_OWNED_WEAPONS:
-		owned_weapons.append(String(id))
-	weapon_slots.clear()
-	for id in DEFAULT_WEAPON_SLOTS:
-		weapon_slots.append(String(id))
+	inventory.clear()
+	inv_next_sid = 1
+	_ensure_weapon_slots()
+	for i in range(WEAPON_SLOT_COUNT):
+		weapon_sids[i] = -1
+	grant_default_kit()
+	_ensure_equipped_weapons()
 	missions_done = {}
 	if FileAccess.file_exists(SAVE_PATH):
 		DirAccess.remove_absolute(SAVE_PATH)

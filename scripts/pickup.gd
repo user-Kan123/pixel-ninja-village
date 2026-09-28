@@ -1,14 +1,14 @@
 class_name Pickup
 extends Node2D
 ## 可拾取物：情报卷轴（任务）/ 回力药 / 查克拉药。
-## 玩家走近自动拾取，有轻微悬浮动画。
+## 玩家走近自动拾取，有轻微悬浮动画。药品是**进背包**（不当场生效），背包满了就留在地上。
 
 var kind := "hp"
 var name_key := "pickup.hp"
-var heal := 0.0
-var chakra := 0.0
 var age := 0.0
 var collected := false
+## 背包满时的提示节流
+var notice_cd := 0.0
 var game
 
 
@@ -19,10 +19,8 @@ static func create(parent: Node, pos: Vector2, kind_name: String, game_node) -> 
 	match kind_name:
 		"hp":
 			p.name_key = "pickup.hp"
-			p.heal = 25.0
 		"chakra":
 			p.name_key = "pickup.chakra"
-			p.chakra = 30.0
 		"intel":
 			p.name_key = "pickup.intel"
 	p.position = pos
@@ -37,6 +35,7 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	if collected:
 		return
+	notice_cd = maxf(notice_cd - delta, 0.0)
 	age += delta
 	var arr := get_tree().get_nodes_in_group("player")
 	if arr.is_empty():
@@ -50,12 +49,17 @@ func _process(delta: float) -> void:
 
 
 func _collect(pl) -> void:
+	if kind != "intel":
+		## 药品进背包，等玩家自己用（F 键或背包里点一下）
+		var item_id := "heal_pill" if kind == "hp" else "chakra_pill"
+		if Flow.inv_add(item_id, 1) <= 0:
+			if notice_cd <= 0.0:
+				notice_cd = 1.5
+				if game != null and game.hud != null:
+					game.hud.show_notice(Data.s("hud.bag_full"))
+			return
 	collected = true
-	if kind == "hp":
-		pl.hp = minf(pl.hp + heal, pl.max_hp)
-	elif kind == "chakra":
-		pl.chakra = minf(pl.chakra + chakra, pl.max_chakra)
-	elif kind == "intel":
+	if kind == "intel":
 		game.on_intel_collected()
 	Fx.burst(game.fx_container, global_position, _color(), 8, 150.0)
 	queue_free()

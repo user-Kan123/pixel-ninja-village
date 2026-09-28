@@ -220,19 +220,22 @@ func shop_open() -> bool:
 	return shop_ui != null and shop_ui.visible
 
 
-## 购买忍具：扣赏金、进背包、自动装入空的武器槽；结果回给界面做提示
-func buy_weapon(id: String) -> void:
+## 购买道具：扣赏金、进背包、顺手补一个空武器槽；结果回给界面做提示
+func buy_item(id: String, qty := 1) -> void:
 	## 先把玩家当前的装配同步给 Flow，否则买完之后会被 Flow 里的旧武器槽覆盖
 	if player != null:
 		Flow.sync_from_player(player)
-	var res := Flow.buy_weapon(id)
+	var res := Flow.buy_item(id, qty)
 	if bool(res.get("ok", false)):
 		_mirror_weapons_from_flow()
-		shop_ui.show_hint(Data.s("shop.bought") % String(res.get("name", "")))
+		if String(res.get("reason", "")) == "partial":
+			shop_ui.show_hint(Data.s("shop.partial") % [int(res.get("bought", 0)), String(res.get("name", ""))])
+		else:
+			shop_ui.show_hint(Data.s("shop.bought") % [String(res.get("name", "")), int(res.get("bought", 0))])
 	elif String(res.get("reason", "")) == "no_money":
 		shop_ui.show_hint(Data.s("shop.no_money") % int(res.get("shortfall", 0)))
-	elif String(res.get("reason", "")) == "owned":
-		shop_ui.show_hint(Data.s("loadout.owned") + " · " + String(res.get("name", "")))
+	else:
+		shop_ui.show_hint(Data.s("shop.no_space") % Flow.INV_SLOTS)
 	shop_ui.queue_redraw()
 
 
@@ -240,9 +243,10 @@ func buy_weapon(id: String) -> void:
 func _mirror_weapons_from_flow() -> void:
 	if player == null:
 		return
+	player._ensure_weapon_slots()
 	for i in range(Player.WEAPON_SLOT_COUNT):
-		var wid := String(Flow.weapon_slots[i]) if i < Flow.weapon_slots.size() else ""
-		player.equip_weapon(i, wid)
+		player.weapon_sids[i] = Flow.sid_of_slot(i)
+	player.sync_active_weapon()
 
 
 func toggle_board() -> void:
