@@ -1,0 +1,102 @@
+{
+  "_comment": "木叶隐村布局 v2.0 —— 按《木叶村地图设计 v1.2》实现。坐标是画布像素，正北=屏幕上方。",
+  "canvas": [4000, 2900],
+  "center": [2000, 1450],
+  "wall_radius": [1780, 1280],
+  "gates": [
+    {"id": "main_gate", "pos": [1900, 2640], "w": 220, "h": 130, "direction": "S"},
+    {"id": "gate_east", "pos": [3560, 1600], "w": 90, "h": 150, "direction": "E"},
+    {"id": "gate_west", "pos": [420, 1500], "w": 90, "h": 150, "direction": "W"}
+  ],
+  "river": {
+    "width": 78,
+    "points": [
+      [780, 900], [700, 1400], [780, 1850], [1090, 2130], [1500, 2200],
+      [2000, 2250], [2500, 2260], [2950, 2140], [3320, 1880]
+    ]
+  },
+  "bridges": [
+    {"id": "bridge_west", "pos": [760, 1850], "w": 130, "h": 90, "angle": 0},
+    {"id": "bridge_uchiha", "pos": [1090, 2130], "w": 130, "h": 90, "angle": 60},
+    {"id": "bridge_south", "pos": [2000, 2250], "w": 150, "h": 90, "angle": 90}
+  ],
+  "districts": [
+    {"id": "hokage", "name_key": "district.hokage", "color": "7a6a58", "label": [2000, 560]},
+    {"id": "school", "name_key": "district.school", "color": "5f6a52", "label": [1000, 620]},
+    {"id": "market", "name_key": "district.market", "color": "7a6448", "label": [2760, 640]},
+    {"id": "home", "name_key": "district.home", "color": "6a6a58", "label": [2050, 2600]},
+    {"id": "riverside", "name_key": "district.riverside", "color": "5a5f4c", "label": [1250, 2650]},
+    {"id": "gate", "name_key": "district.gate", "color": "6a6050", "label": [1900, 2500]},
+    {"id": "exam_forest", "name_key": "district.exam_forest", "color": "3f5236", "label": [3380, 1020]}
+  ],
+  "buildings": [
+    {"id": "hokage_rock", "name_key": "building.hokage_rock", "pos": [1450, 150], "size": [1100, 230], "style": "hokage_rock", "solid": false, "priority": "P1"},
+    {"id": "hokage_office", "name_key": "building.hokage", "pos": [1830, 820], "size": [420, 300], "style": "hokage", "solid": true, "priority": "P0"},
+    {"id": "hokage_residence", "name_key": "building.hokage_residence", "pos": [1700, 560], "size": [220, 170], "style": "residence", "solid": true, "priority": "P2"},
+    {"id": "forbidden_vault", "name_key": "building.vault", "pos": [2380, 560], "size": [190, 150], "style": "vault", "solid": true, "priority": "P1"},
+    {"id": "anbu_hq", "name_key": "building.anbu", "pos": [1400, 830], "size": [220, 175], "style": "office", "solid": true, "priority": "P1"},
+    {"id": "mission_desk", "name_key": "building.mission_desk", "pos": [2380, 830], "size": [190, 150], "style": "office", "solid": true, "priority": "P0"},
+    {"id": "guest_house", "name_key": "building.guest_house", "pos": [2640, 1000], "size": [200, 160], "style": "office", "solid": true, "priority": "P2"},
+    {"id": "hospital", "name_key": "building.hospital", "pos": [1150, 1050], "size": [300, 210], "style": "hospital", "solid": true, "priority": "P0"},
+    {"id": "park_a", "name_key": "building.park_a", "pos": [2000, 1290], "size": [330, 330], "style": "park", "solid": false, "priority": "P1"},
+
+    {"id": "storage_tower", "name_key": "building.storage_tower", "pos": [1080, 700], "size": [120, 160], "style": "tower", "solid": true, "priority": "P2"},
+    {"id": "training_05", "name_key": "building.training_05", "pos": [1300, 760], "size": [270, 210], "style": "training", "solid": false, "priority": "P0"},
+    {"id": "training_02", "name_key": "building.training_02", "pos": [900, 1150], "size": [270, 215], "style": "training", "solid": false, "priority": "P0"},
+    {"id": "ninja_school", "name_key": "building.school", "pos": [1000, 1350], "size": [330, 240], "style": "school", "solid": true, "priority": "P0"},
+    {"id": "training_21", "name_key": "building.training_21", "pos": [860, 1450], "size": [260, 200], "style": "training", "solid": false, "priority": "P0"},
+    {"id": "training_03", "name_key": "building.training_03", "pos": [1050, 1650], "size": [350, 250], "style": "training", "solid": false, "priority": "P0"},
+    {"id": "training_00", "name_key": "building.training_00", "pos": [1200, 1800], "size": [320, 240], "style": "training", "solid": false, "priority": "P0"},
+
+    {"id": "theater", "name_key": "building.theater", "pos": [2850, 700], "size": [210, 170], "style": "theater", "solid": true, "priority": "P2"},
+    {"id": "ichiraku", "name_key": "building.ramen", "pos": [3050, 900], "size": [200, 150], "style": "ramen", "solid": true, "priority": "P0"},
+    {"id": "tool_shop", "name_key": "building.shop", "pos": [3060, 1120], "size": [200, 160], "style": "tools", "solid": true, "priority": "P0"},
+    {"id": "bath_house", "name_key": "building.bath", "pos": [2500, 900], "size": [220, 170], "style": "bath", "solid": true, "priority": "P1"},
+    {"id": "commercial_a", "name_key": "building.commercial_a", "pos": [2650, 1200], "size": [240, 180], "style": "shop", "solid": true, "priority": "P1"},
+    {"id": "commercial_b", "name_key": "building.commercial_b", "pos": [2650, 1430], "size": [240, 180], "style": "shop", "solid": true, "priority": "P1"},
+    {"id": "flower_shop", "name_key": "building.flower_shop", "pos": [3020, 1360], "size": [180, 140], "style": "shop", "solid": true, "priority": "P1"},
+    {"id": "dango_shop", "name_key": "building.dango_shop", "pos": [3020, 1550], "size": [160, 130], "style": "shop", "solid": true, "priority": "P2"},
+    {"id": "news_office", "name_key": "building.news_office", "pos": [2900, 1750], "size": [180, 150], "style": "office", "solid": true, "priority": "P2"},
+    {"id": "supermarket", "name_key": "building.supermarket", "pos": [2600, 1900], "size": [190, 160], "style": "shop", "solid": true, "priority": "P1"},
+    {"id": "bbq_shop", "name_key": "building.bbq_shop", "pos": [2820, 1980], "size": [180, 150], "style": "shop", "solid": true, "priority": "P2"},
+    {"id": "sake_bar", "name_key": "building.sake_bar", "pos": [3000, 1950], "size": [160, 130], "style": "shop", "solid": true, "priority": "P2"},
+    {"id": "tea_street", "name_key": "building.tea_street", "pos": [2560, 2160], "size": [210, 150], "style": "shop", "solid": true, "priority": "P2"},
+    {"id": "wharf", "name_key": "building.wharf", "pos": [2450, 2300], "size": [160, 110], "style": "wharf", "solid": false, "priority": "P2"},
+
+    {"id": "exam_forest", "name_key": "building.exam_forest", "pos": [3250, 1150], "size": [420, 620], "style": "forest", "solid": false, "priority": "P1"},
+    {"id": "exam_tower", "name_key": "building.exam_tower", "pos": [3350, 1400], "size": [150, 150], "style": "tower", "solid": true, "priority": "P2"},
+
+    {"id": "police_hq", "name_key": "building.police_hq", "pos": [2150, 1550], "size": [230, 180], "style": "office", "solid": true, "priority": "P1"},
+    {"id": "hyuga_estate", "name_key": "building.hyuga", "pos": [2450, 1700], "size": [300, 220], "style": "clan", "solid": true, "priority": "P1"},
+    {"id": "apartment_block", "name_key": "building.apartment_block", "pos": [1900, 1800], "size": [250, 180], "style": "apartment", "solid": true, "priority": "P1"},
+    {"id": "player_apartment", "name_key": "building.apartment", "pos": [1750, 2050], "size": [270, 200], "style": "apartment", "solid": true, "priority": "P0"},
+    {"id": "naruto_apartment", "name_key": "building.naruto_apartment", "pos": [2250, 2150], "size": [230, 170], "style": "apartment", "solid": true, "priority": "P1"},
+
+    {"id": "uchiha_quarter", "name_key": "building.uchiha_quarter", "pos": [1050, 2320], "size": [420, 200], "style": "house_block", "solid": true, "priority": "P1"},
+    {"id": "uchiha_monument", "name_key": "building.uchiha_monument", "pos": [1520, 2280], "size": [80, 80], "style": "stone", "solid": false, "priority": "P1"},
+    {"id": "cemetery", "name_key": "building.cemetery", "pos": [1600, 2420], "size": [260, 190], "style": "cemetery", "solid": false, "priority": "P1"},
+    {"id": "memorial_stone", "name_key": "building.memorial_stone", "pos": [1560, 2360], "size": [70, 90], "style": "stone", "solid": false, "priority": "P1"},
+
+    {"id": "sentry_room", "name_key": "building.sentry_room", "pos": [1720, 2450], "size": [160, 130], "style": "watch", "solid": true, "priority": "P1"},
+    {"id": "relay_station", "name_key": "building.relay_station", "pos": [2220, 2430], "size": [180, 150], "style": "shop", "solid": true, "priority": "P2"},
+    {"id": "watch_a", "name_key": "building.watch_a", "pos": [2050, 2470], "size": [90, 90], "style": "watch", "solid": true, "priority": "P2"},
+    {"id": "watch_b", "name_key": "building.watch_b", "pos": [2900, 560], "size": [90, 90], "style": "watch", "solid": true, "priority": "P2"},
+    {"id": "watch_c", "name_key": "building.watch_c", "pos": [1150, 480], "size": [90, 90], "style": "watch", "solid": true, "priority": "P2"},
+    {"id": "watch_d", "name_key": "building.watch_d", "pos": [620, 1560], "size": [90, 90], "style": "watch", "solid": true, "priority": "P2"},
+    {"id": "watch_e", "name_key": "building.watch_e", "pos": [3380, 1660], "size": [90, 90], "style": "watch", "solid": true, "priority": "P2"}
+  ],
+  "filler_areas": [
+    {"district": "hokage", "rect": [1450, 1050, 700, 200], "count": 6, "style": "office"},
+    {"district": "hokage", "rect": [1250, 1150, 620, 190], "count": 4, "style": "office"},
+    {"district": "hokage", "rect": [2130, 1150, 620, 190], "count": 4, "style": "office"},
+    {"district": "hokage", "rect": [1180, 620, 260, 260], "count": 3, "style": "house"},
+    {"district": "school", "rect": [760, 1250, 250, 400], "count": 5, "style": "house"},
+    {"district": "school", "rect": [1450, 950, 260, 240], "count": 3, "style": "house"},
+    {"district": "market", "rect": [2350, 1600, 420, 480], "count": 12, "style": "shop"},
+    {"district": "home", "rect": [1650, 1950, 800, 380], "count": 18, "style": "house"},
+    {"district": "home", "rect": [1450, 1550, 420, 300], "count": 6, "style": "house"},
+    {"district": "riverside", "rect": [900, 2400, 620, 200], "count": 10, "style": "house"},
+    {"district": "gate", "rect": [1750, 2500, 500, 120], "count": 4, "style": "shop"},
+    {"district": "exam_forest", "rect": [3260, 1200, 380, 520], "count": 4, "style": "tent"}
+  ]
+}

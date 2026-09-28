@@ -19,6 +19,8 @@ var missions: Dictionary = {}
 var weapons: Dictionary = {}
 ## 消耗品表（兵粮丸 / 回力药 / 查克拉药）
 var items: Dictionary = {}
+## 村庄布局（区 / 建筑 / 河 / 桥 / 门 / 填充民居）
+var village_layout: Dictionary = {}
 var jutsu_list: Array[String] = []
 var weapon_list: Array[String] = []
 var item_list: Array[String] = []
@@ -31,6 +33,7 @@ func _ready() -> void:
 	missions = _load_json("res://data/mission.json")
 	weapons = _load_json("res://data/weapon.json")
 	items = _load_json("res://data/item.json")
+	village_layout = _load_json("res://data/village_layout.json")
 	_build_jutsu_list()
 	_build_weapon_list()
 	_build_item_list()

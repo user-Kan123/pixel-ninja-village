@@ -1,52 +1,36 @@
 extends Node2D
-## 村庄：玩家日常据点。任务看板（接任务）→ 村口大门（出发）；训练场入口；休息处（存档）。
-## 村内没有敌人，等级 < 15 时也不会触发遭遇战（见设计基线 §1 决策 2）。
-## 建筑名全部走名词表（Data.s），本文件不含专有名词。
+## 木叶隐村 v2.0 —— 按《木叶村地图设计 v1.2》实现。
+##
+## 结构：圆形围墙 + 三环八放射道路 + 一条横穿南部的河 + 7 个区
+##   D1 火影区(北) / D2 学校与演习场(西) / D3 商业区(东) / D4 住宅区(东南)
+##   D5 河对岸·原宇智波与陵园(西南) / D6 正门区(南) / D7 中忍考试森林(东)
+##
+## 布局数据（区 / 建筑 / 河 / 桥 / 门 / 填充民居）全部来自 data/village_layout.json，
+## 本文件只负责"把数据画出来"和交互。建筑外观是程序化绘制的像素插画（暂无外部素材，
+## 以后要换成真图，只需替换 _draw_building() 这一层）。
 
-var arena_size := Vector2(2000.0, 1280.0)
-
-## 建筑（也是碰撞体）
-var BUILDINGS := [
-	{"rect": Rect2(760, 150, 440, 200), "key": "building.hokage", "style": "hokage",
-		"wall": Color("c0483a"), "roof": Color("7a2e26"), "trim": Color("e8d8b8")},
-	{"rect": Rect2(140, 160, 300, 178), "key": "building.school", "style": "school",
-		"wall": Color("d8c9a8"), "roof": Color("6a5a44"), "trim": Color("f0e6d0")},
-	{"rect": Rect2(1290, 185, 190, 145), "key": "building.mission", "style": "mission",
-		"wall": Color("b89a6a"), "roof": Color("6e5232"), "trim": Color("e0d0a8")},
-	{"rect": Rect2(160, 540, 250, 158), "key": "building.ramen", "style": "ramen",
-		"wall": Color("d8b088"), "roof": Color("8a5a38"), "trim": Color("e8dcc0")},
-	{"rect": Rect2(1580, 520, 250, 162), "key": "building.shop", "style": "shop",
-		"wall": Color("a88a5a"), "roof": Color("5e4630"), "trim": Color("d8c8a0")},
-	{"rect": Rect2(620, 770, 260, 168), "key": "building.apartment", "style": "apartment",
-		"wall": Color("c0b0a0"), "roof": Color("6a5a52"), "trim": Color("e0d8cc")},
-	{"rect": Rect2(1490, 870, 270, 178), "key": "building.hospital", "style": "hospital",
-		"wall": Color("e4e8e4"), "roof": Color("7a8a90"), "trim": Color("f0f4f0")},
-	{"rect": Rect2(250, 900, 270, 172), "key": "building.bath", "style": "bath",
-		"wall": Color("b8c8d0"), "roof": Color("5a7a8c"), "trim": Color("e0e8ec")},
-]
-
-## 道路 / 广场
-var PATHS := [
-	Rect2(600, 350, 800, 200),
-	Rect2(0, 650, 2000, 82),
-	Rect2(950, 340, 100, 880),
-	Rect2(300, 420, 90, 240),
-	Rect2(1580, 420, 90, 240),
-	Rect2(150, 650, 130, 70),
-	Rect2(1710, 650, 130, 70),
-	Rect2(620, 700, 80, 90),
-	Rect2(260, 830, 110, 90),
-	Rect2(1490, 830, 110, 90),
-]
-
-## 交互点
-const BOARD_POS := Vector2(1385.0, 370.0)
-const TORII_POS := Vector2(1790.0, 250.0)
-const SHRINE_POS := Vector2(520.0, 600.0)
-const GATE_POS := Vector2(1000.0, 1180.0)
-## 忍具店门口：店铺本体是 1580,520 起的建筑，交互点放在门口的街上
-const SHOP_POS := Vector2(1700.0, 720.0)
 const INTERACT_RADIUS := 72.0
+const WALL_SEGMENTS := 72
+
+var layout: Dictionary = {}
+var arena_size := Vector2(4000.0, 2900.0)
+var center := Vector2(2000.0, 1450.0)
+var wall := Vector2(1780.0, 1280.0)
+var river_w := 78.0
+
+## 规范化后的建筑：[{id, name, rect, style, solid, priority}]
+var buildings: Array = []
+var bridges: Array = []
+var gate_list: Array = []
+var river_pts := PackedVector2Array()
+var district_labels: Array = []
+
+## 交互点（_ready 里从建筑数据推导，不写死坐标）
+var BOARD_POS := Vector2.ZERO
+var SHOP_POS := Vector2.ZERO
+var SHRINE_POS := Vector2.ZERO
+var TORII_POS := Vector2.ZERO
+var GATE_POS := Vector2.ZERO
 
 var player: Player
 var hud: VillageHud
@@ -61,18 +45,226 @@ var walls: Array[EarthWall] = []
 var loadout_open := false
 
 var _hs_active := false
+var _rng := RandomNumberGenerator.new()
 
 
 func _ready() -> void:
-	_build_bounds()
-	for b in BUILDINGS:
-		_add_static_rect(b["rect"])
+	layout = Data.village_layout
+	if layout.is_empty():
+		push_error("village_layout.json 读取失败，村庄会是一片空地")
+	_parse_layout()
+	_build_decor()
+	_build_wall()
+	for b in buildings:
+		if bool(b["solid"]):
+			_add_static_rect(b["rect"] as Rect2)
 	fx_container = _make_container("Fx")
 	projectile_container = _make_container("Projectiles")
 	field_container = _make_container("Fields")
 	_spawn_player()
 	_spawn_ui()
 
+
+# ---------------------------------------------------------------- 布局解析
+
+func _parse_layout() -> void:
+	var c: Array = layout.get("canvas", [4000, 2900])
+	arena_size = Vector2(float(c[0]), float(c[1]))
+	var ctr: Array = layout.get("center", [2000, 1450])
+	center = Vector2(float(ctr[0]), float(ctr[1]))
+	var wr: Array = layout.get("wall_radius", [1780, 1280])
+	wall = Vector2(float(wr[0]), float(wr[1]))
+
+	buildings.clear()
+	for e in layout.get("buildings", []):
+		buildings.append(_norm_building(e))
+
+	## 填充民居：用固定种子随机摆放，位置每次都一样（可复现，也方便调）
+	_rng.seed = 20260929
+	for area in layout.get("filler_areas", []):
+		_fill_area(area)
+	_sort_buildings()
+
+	## 河：折线 + 宽度
+	river_pts = PackedVector2Array()
+	var riv: Dictionary = layout.get("river", {})
+	river_w = float(riv.get("width", 78.0))
+	for p in riv.get("points", []):
+		river_pts.append(Vector2(float(p[0]), float(p[1])))
+
+	bridges.clear()
+	for e in layout.get("bridges", []):
+		bridges.append({
+			"id": String(e.get("id", "")),
+			"rect": _rect_of(e),
+			"angle": float(e.get("angle", 0.0)),
+		})
+
+	gate_list.clear()
+	for e in layout.get("gates", []):
+		gate_list.append({
+			"id": String(e.get("id", "")),
+			"rect": _rect_of(e),
+			"direction": String(e.get("direction", "")),
+		})
+
+	district_labels.clear()
+	for d in layout.get("districts", []):
+		var lp: Array = d.get("label", [0, 0])
+		district_labels.append({
+			"name": Data.s(String(d.get("name_key", ""))),
+			"pos": Vector2(float(lp[0]), float(lp[1])),
+			"color": Color(String(d.get("color", "6a6a58"))),
+		})
+
+	## 交互点：由建筑推导，改布局不用改代码
+	BOARD_POS = _front_of("mission_desk", 46.0)
+	SHOP_POS = _front_of("tool_shop", 46.0)
+	SHRINE_POS = _front_of("player_apartment", 46.0)
+	TORII_POS = _front_of("training_03", 40.0)
+	var mg := _building("main_gate")
+	GATE_POS = (mg.get("rect", Rect2(1900, 2640, 220, 130)) as Rect2).get_center() + Vector2(0.0, -20.0)
+
+
+func _rect_of(e: Dictionary) -> Rect2:
+	var p: Array = e.get("pos", [0, 0])
+	var w := float(e.get("w", 100))
+	var h := float(e.get("h", 100))
+	return Rect2(float(p[0]), float(p[1]), w, h)
+
+
+func _norm_building(e: Dictionary) -> Dictionary:
+	return {
+		"id": String(e.get("id", "")),
+		"name": Data.s(String(e.get("name_key", ""))),
+		"rect": _rect_of(e),
+		"style": String(e.get("style", "house")),
+		"solid": bool(e.get("solid", true)),
+		"priority": String(e.get("priority", "P2")),
+	}
+
+
+func _sort_buildings() -> void:
+	## 按 y 排序，让"靠下的建筑盖住靠上的"，俯视视角才有前后关系
+	buildings.sort_custom(func(a, b): return (a["rect"] as Rect2).end.y < (b["rect"] as Rect2).end.y)
+
+
+func _building(id: String) -> Dictionary:
+	for b in buildings:
+		if String(b["id"]) == id:
+			return b
+	return {}
+
+
+func _front_of(id: String, gap: float) -> Vector2:
+	var b := _building(id)
+	if b.is_empty():
+		return center
+	var r: Rect2 = b["rect"]
+	return Vector2(r.get_center().x, r.end.y + gap)
+
+
+## 在填充区里按抖动网格摆民居，避开建筑 / 道路 / 河 / 墙
+func _fill_area(area: Dictionary) -> void:
+	var r: Array = area.get("rect", [0, 0, 0, 0])
+	var box := Rect2(float(r[0]), float(r[1]), float(r[2]), float(r[3]))
+	var count := int(area.get("count", 4))
+	var style := String(area.get("style", "house"))
+	if box.size.x <= 0.0 or box.size.y <= 0.0:
+		return
+	var cols := maxi(int(box.size.x / 130.0), 1)
+	var rows := maxi(int(box.size.y / 120.0), 1)
+	var placed := 0
+	for ry in rows:
+		for rx in cols:
+			if placed >= count:
+				break
+			var w := _rng.randf_range(78.0, 112.0)
+			var h := _rng.randf_range(66.0, 96.0)
+			var px := box.position.x + (float(rx) + 0.5) * box.size.x / float(cols) + _rng.randf_range(-18.0, 18.0)
+			var py := box.position.y + (float(ry) + 0.5) * box.size.y / float(rows) + _rng.randf_range(-16.0, 16.0)
+			var rect := Rect2(px - w * 0.5, py - h * 0.5, w, h)
+			if not _spot_free(rect):
+				continue
+			buildings.append({
+				"id": "filler_" + str(placed) + "_" + str(int(px)),
+				"name": "",
+				"rect": rect,
+				"style": style,
+				"solid": true,
+				"priority": "P2",
+			})
+			placed += 1
+
+
+func _spot_free(rect: Rect2) -> bool:
+	## 必须在墙内
+	var corners := [
+		rect.position, Vector2(rect.end.x, rect.position.y),
+		Vector2(rect.position.x, rect.end.y), rect.end,
+	]
+	for c in corners:
+		if not _inside_wall(c, 60.0):
+			return false
+	## 不压已有建筑
+	for b in buildings:
+		if (b["rect"] as Rect2).grow(14.0).intersects(rect):
+			return false
+	## 不压河
+	if _dist_to_river(rect.get_center()) < river_w * 0.5 + rect.size.length() * 0.5 + 26.0:
+		return false
+	## 不压主路
+	if _near_road(rect.get_center()):
+		return false
+	return true
+
+
+func _inside_wall(p: Vector2, margin := 0.0) -> bool:
+	var rx := maxf(wall.x - margin, 1.0)
+	var ry := maxf(wall.y - margin, 1.0)
+	var nx := (p.x - center.x) / rx
+	var ny := (p.y - center.y) / ry
+	return nx * nx + ny * ny <= 1.0
+
+
+## 三个环路的半径（椭圆归一化），加道路附近的判定
+const RING_RADII := [0.34, 0.60, 0.85]
+
+func _near_road(p: Vector2) -> bool:
+	var nx := (p.x - center.x) / wall.x
+	var ny := (p.y - center.y) / wall.y
+	var d := sqrt(nx * nx + ny * ny)
+	for rr in RING_RADII:
+		if absf(d - float(rr)) < 0.055:
+			return true
+	## 八条放射主路
+	var ang := rad_to_deg(atan2(p.x - center.x, -(p.y - center.y)))
+	if ang < 0.0:
+		ang += 360.0
+	var step := fmod(ang, 45.0)
+	if step < 5.0 or step > 40.0:
+		return true
+	return false
+
+
+func _dist_to_river(p: Vector2) -> float:
+	var best := 99999.0
+	for i in range(river_pts.size() - 1):
+		var d := _dist_to_segment(p, river_pts[i], river_pts[i + 1])
+		best = minf(best, d)
+	return best
+
+
+func _dist_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len2 := ab.length_squared()
+	if len2 <= 0.001:
+		return p.distance_to(a)
+	var t: float = clampf((p - a).dot(ab) / len2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
+# ---------------------------------------------------------------- 物理边界
 
 func _make_container(n: String) -> Node2D:
 	var c := Node2D.new()
@@ -81,15 +273,22 @@ func _make_container(n: String) -> Node2D:
 	return c
 
 
-func _build_bounds() -> void:
+## 围墙壁：沿椭圆撒一圈薄长方体，玩家走不出去（门只是交互点，不开口）
+func _build_wall() -> void:
+	for i in WALL_SEGMENTS:
+		var a0 := TAU * float(i) / float(WALL_SEGMENTS)
+		var a1 := TAU * float(i + 1) / float(WALL_SEGMENTS)
+		var p0 := center + Vector2(sin(a0) * wall.x, -cos(a0) * wall.y)
+		var p1 := center + Vector2(sin(a1) * wall.x, -cos(a1) * wall.y)
+		_add_static_segment(p0, p1, 26.0)
+	## 画布四边兜底，防止极端情况下穿出去
 	var t := 60.0
-	var rects := [
+	for r in [
 		Rect2(-t, -t, arena_size.x + 2.0 * t, t),
 		Rect2(-t, arena_size.y, arena_size.x + 2.0 * t, t),
 		Rect2(-t, 0.0, t, arena_size.y),
 		Rect2(arena_size.x, 0.0, t, arena_size.y),
-	]
-	for r in rects:
+	]:
 		_add_static_rect(r)
 
 
@@ -104,10 +303,25 @@ func _add_static_rect(r: Rect2) -> void:
 	add_child(body)
 
 
+func _add_static_segment(p0: Vector2, p1: Vector2, thickness: float) -> void:
+	var body := StaticBody2D.new()
+	body.position = (p0 + p1) * 0.5
+	body.rotation = (p1 - p0).angle()
+	var col := CollisionShape2D.new()
+	var shape := RectangleShape2D.new()
+	shape.size = Vector2((p1 - p0).length() + thickness, thickness)
+	col.shape = shape
+	body.add_child(col)
+	add_child(body)
+
+
+# ---------------------------------------------------------------- 玩家 / UI
+
 func _spawn_player() -> void:
 	player = Player.new()
 	player.game = self
-	player.position = Vector2(1000.0, 1060.0)
+	## 出生在公园A（村子正中），面朝火影大楼
+	player.position = Vector2(center.x, center.y - 40.0)
 	add_child(player)
 	Flow.apply_to_player(player)
 
@@ -140,7 +354,6 @@ func _spawn_ui() -> void:
 
 # ---------------------------------------------------------------- 任务接取
 
-## 看板选择任务：登记待出发，引导玩家去村口大门
 func accept_mission_from_board(id: String) -> void:
 	Flow.accept_mission(id)
 	close_board()
@@ -151,12 +364,11 @@ func accept_mission_from_board(id: String) -> void:
 
 func _nearest_interactable() -> Dictionary:
 	var spots := [
-		{"pos": BOARD_POS, "kind": "board", "hint": Data.s("village.board") + " · " + Data.s("village.open")},
-		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("village.gate") + " · " + Data.s("village.enter")},
-		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("village.shrine") + " · " + Data.s("village.rest")},
+		{"pos": BOARD_POS, "kind": "board", "hint": Data.s("building.mission_desk") + " · " + Data.s("village.open")},
+		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("building.training_03") + " · " + Data.s("village.enter")},
+		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("building.apartment") + " · " + Data.s("village.rest")},
 		{"pos": SHOP_POS, "kind": "shop", "hint": Data.s("village.shop") + " · " + Data.s("village.open_shop")},
 	]
-	## 村口大门：只有接了待出发任务时才能交互
 	if Flow.pending_mission != "":
 		spots.append({"pos": GATE_POS, "kind": "depart", "hint": Data.s("village.depart")})
 	var best := {}
@@ -170,6 +382,8 @@ func _nearest_interactable() -> Dictionary:
 
 
 func current_interact_hint() -> String:
+	if player == null:
+		return ""
 	return String(_nearest_interactable().get("hint", ""))
 
 
@@ -220,7 +434,6 @@ func shop_open() -> bool:
 	return shop_ui != null and shop_ui.visible
 
 
-## 购买道具：扣赏金、进背包、顺手补一个空武器槽；结果回给界面做提示
 func buy_item(id: String, qty := 1) -> void:
 	## 先把玩家当前的装配同步给 Flow，否则买完之后会被 Flow 里的旧武器槽覆盖
 	if player != null:
@@ -239,7 +452,6 @@ func buy_item(id: String, qty := 1) -> void:
 	shop_ui.queue_redraw()
 
 
-## Flow 里买到的忍具自动占了一个空槽，这里把它同步到当前场景的玩家实例上
 func _mirror_weapons_from_flow() -> void:
 	if player == null:
 		return
@@ -248,6 +460,8 @@ func _mirror_weapons_from_flow() -> void:
 		player.weapon_sids[i] = Flow.sid_of_slot(i)
 	player.sync_active_weapon()
 
+
+# ---------------------------------------------------------------- 看板 / 装配
 
 func toggle_board() -> void:
 	if board_ui.visible:
@@ -317,12 +531,12 @@ func on_player_level_up(_level: int) -> void:
 
 
 func on_player_died() -> void:
-	## 村内不应死亡；兜底：回满血瞬回主干道
+	## 村内不应死亡；兜底：回满血送回公园A
 	if player != null:
 		player.dead = false
 		player.hp = player.max_hp
 		player.state = Player.State.MOVE
-		player.global_position = Vector2(1000.0, 900.0)
+		player.global_position = Vector2(center.x, center.y - 40.0)
 
 
 func on_enemy_died(_enemy: Node) -> void:
@@ -333,22 +547,41 @@ func on_intel_collected() -> void:
 	pass
 
 
+## 把坐标限制在围墙内（留 margin 给玩家体型）
 func clamp_to_arena(pos: Vector2, margin := 24.0) -> Vector2:
-	return Vector2(
+	var out := Vector2(
 		clampf(pos.x, margin, arena_size.x - margin),
 		clampf(pos.y, margin, arena_size.y - margin)
 	)
+	if _inside_wall(out, margin * 0.5):
+		return out
+	## 超出墙就往圆心拉回来
+	var dir := (out - center).normalized()
+	if dir == Vector2.ZERO:
+		dir = Vector2.DOWN
+	for i in 60:
+		out = out.move_toward(center, 24.0)
+		if _inside_wall(out, margin * 0.5):
+			break
+	return out
 
 
 func pos_blocked(pos: Vector2) -> bool:
-	for b in BUILDINGS:
-		if (b["rect"] as Rect2).grow(6.0).has_point(pos):
+	if not _inside_wall(pos, 18.0):
+		return true
+	for b in buildings:
+		if bool(b["solid"]) and (b["rect"] as Rect2).grow(6.0).has_point(pos):
+			return true
+	for wr in wall_rects():
+		if wr.grow(4.0).has_point(pos):
 			return true
 	return false
 
 
 func resolve_static(pos: Vector2) -> Vector2:
-	for b in BUILDINGS:
+	for b in buildings:
+		if not bool(b["solid"]):
+			continue
 		var r: Rect2 = b["rect"]
 		if r.grow(4.0).has_point(pos):
 			pos = _push_out_of_rect(pos, r)
@@ -356,7 +589,7 @@ func resolve_static(pos: Vector2) -> Vector2:
 
 
 func resolve_point(pos: Vector2, margin: float) -> Vector2:
-	return resolve_static(pos)
+	return clamp_to_arena(resolve_static(pos), margin)
 
 
 func _push_out_of_rect(pos: Vector2, r: Rect2) -> Vector2:
@@ -389,238 +622,270 @@ func unregister_wall(w: EarthWall) -> void:
 	walls.erase(w)
 
 
+func wall_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for w in walls:
+		if is_instance_valid(w) and not w.is_queued_for_deletion():
+			out.append(Rect2(w.global_position + w.box.position, w.box.size))
+	return out
+
+
+# ---------------------------------------------------------------- 装饰预生成
+
+var _trees: Array = []
+var _grass: Array = []
+
+
+## 树与草的随机分布只算一次（_draw 每帧都跑，不能每帧随机）
+func _build_decor() -> void:
+	_trees.clear()
+	_grass.clear()
+	_rng.seed = 424242
+	var tries := 0
+	while _grass.size() < 460 and tries < 6000:
+		tries += 1
+		var p := _random_in_village()
+		if _decor_free(p, 10.0):
+			_grass.append(p)
+	tries = 0
+	while _trees.size() < 170 and tries < 6000:
+		tries += 1
+		var p2 := _random_in_village()
+		if _decor_free(p2, 34.0):
+			_trees.append({"pos": p2, "size": _rng.randf_range(15.0, 25.0)})
+	## 中忍考试森林：整块加密（这一块不判道路，只看建筑）
+	var ef := _building("exam_forest")
+	if not ef.is_empty():
+		var r: Rect2 = ef["rect"]
+		for i in 90:
+			var p3 := Vector2(
+				_rng.randf_range(r.position.x, r.end.x),
+				_rng.randf_range(r.position.y, r.end.y)
+			)
+			if _decor_free(p3, 16.0):
+				_trees.append({"pos": p3, "size": _rng.randf_range(18.0, 30.0)})
+
+
+func _random_in_village() -> Vector2:
+	## 在墙内均匀撒点（用拒绝采样，简单可靠）
+	for i in 24:
+		var p := Vector2(
+			_rng.randf_range(center.x - wall.x, center.x + wall.x),
+			_rng.randf_range(center.y - wall.y, center.y + wall.y)
+		)
+		if _inside_wall(p, 70.0):
+			return p
+	return center
+
+
+func _decor_free(p: Vector2, clearance: float) -> bool:
+	if _dist_to_river(p) < river_w * 0.5 + 20.0:
+		return false
+	for b in buildings:
+		if (b["rect"] as Rect2).grow(clearance).has_point(p):
+			return false
+	var nx := (p.x - center.x) / wall.x
+	var ny := (p.y - center.y) / wall.y
+	var d := sqrt(nx * nx + ny * ny)
+	for rr in RING_RADII:
+		if absf(d - float(rr)) < 0.045:
+			return false
+	var ang := rad_to_deg(atan2(p.x - center.x, -(p.y - center.y)))
+	if ang < 0.0:
+		ang += 360.0
+	var step := fmod(ang, 45.0)
+	if step < 3.5 or step > 41.5:
+		return false
+	return true
+
+
 # ---------------------------------------------------------------- 绘制
 
 func _draw() -> void:
-	## 草底
-	draw_rect(Rect2(Vector2.ZERO, arena_size), Color("3d5c3a"))
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 42
-	for i in 120:
-		var p := Vector2(rng.randf_range(0.0, arena_size.x), rng.randf_range(0.0, arena_size.y))
-		if _is_cleared(p):
-			continue
-		draw_circle(p, rng.randf_range(2.0, 5.0), Color(0.25, 0.42, 0.23, 0.5))
-	## 道路 / 广场
-	for pr in PATHS:
-		draw_rect(pr, Color("8a7a5c"))
-	## 火影岩（在建筑后）
-	_draw_mountain()
-	## 建筑
-	for b in BUILDINGS:
-		_draw_building(b)
-	## 自然装饰（树 / 灌木），避开道路建筑
+	_draw_ground()
+	_draw_district_tints()
+	_draw_roads()
+	_draw_river()
+	_draw_wall()
 	_draw_nature()
-	## 路灯
-	for lx in [200, 600, 1300, 1800]:
-		_draw_lamp(Vector2(lx, 692))
-	for ly in [480, 820, 1080]:
-		_draw_lamp(Vector2(1000, ly))
-	## 交互设施
-	_draw_board()
-	_draw_torii(TORII_POS)
-	_draw_shrine()
-	_draw_shop_stall()
-	_draw_village_gate()
+	_draw_mountain()
+	for b in buildings:
+		_draw_building(b)
+	_draw_bridges()
+	_draw_gates()
+	_draw_interact_markers()
 
 
-func _is_cleared(p: Vector2) -> bool:
-	for pr in PATHS:
-		if pr.has_point(p):
-			return true
-	for b in BUILDINGS:
-		if (b["rect"] as Rect2).grow(24.0).has_point(p):
-			return true
-	if p.x > 640.0 and p.x < 1320.0 and p.y < 150.0:
-		return true
-	return false
+func _draw_ground() -> void:
+	## 村外森林底 + 墙内草底
+	draw_rect(Rect2(Vector2.ZERO, arena_size), Color("22331f"))
+	for i in 26:
+		var a := TAU * float(i) / 26.0
+		var p := center + Vector2(sin(a) * wall.x * 1.16, -cos(a) * wall.y * 1.16)
+		draw_circle(p, 150.0, Color("2b4026"))
+	_build_ellipse_fill(Color("3d5c3a"), 1.0)
+	## 草点
+	for p in _grass:
+		draw_circle(p, 3.0, Color(0.25, 0.42, 0.23, 0.55))
+
+
+func _build_ellipse_fill(col: Color, scale: float) -> void:
+	var pts := PackedVector2Array()
+	for i in 96:
+		var a := TAU * float(i) / 96.0
+		pts.append(center + Vector2(sin(a) * wall.x * scale, -cos(a) * wall.y * scale))
+	draw_colored_polygon(pts, col)
+
+
+func _draw_district_tints() -> void:
+	for d in district_labels:
+		var col: Color = d["color"]
+		col.a = 0.13
+		draw_circle(d["pos"], 380.0, col)
+		## 分区名（半透明大字，只在拉远时看得清，不挡建筑）
+		draw_string(Data.font(), Vector2(d["pos"].x - 190.0, d["pos"].y - 150.0), String(d["name"]),
+			HORIZONTAL_ALIGNMENT_CENTER, 380.0, 34, Color(1.0, 1.0, 1.0, 0.18))
+
+
+func _draw_roads() -> void:
+	var road := Color("8a7a5c")
+	var edge := Color("6d6047")
+	for rr in RING_RADII:
+		var prev := _ellipse_point(0.0, float(rr))
+		for i in range(1, 97):
+			var cur := _ellipse_point(TAU * float(i) / 96.0, float(rr))
+			draw_line(prev, cur, edge, 46.0)
+			draw_line(prev, cur, road, 38.0)
+			prev = cur
+	## 八条放射主路
+	for i in 8:
+		var a := TAU * float(i) / 8.0
+		var p0 := center
+		var p1 := _ellipse_point(a, 1.0)
+		draw_line(p0, p1, edge, 46.0)
+		draw_line(p0, p1, road, 38.0)
+	## 中央广场
+	draw_circle(center, 200.0, edge)
+	draw_circle(center, 190.0, Color("9a8a6a"))
+
+
+func _ellipse_point(a: float, rr: float) -> Vector2:
+	return center + Vector2(sin(a) * wall.x * rr, -cos(a) * wall.y * rr)
+
+
+func _draw_river() -> void:
+	if river_pts.size() < 2:
+		return
+	for i in range(river_pts.size() - 1):
+		draw_line(river_pts[i], river_pts[i + 1], Color("5a6a72"), river_w + 16.0)
+	for i in range(river_pts.size() - 1):
+		draw_line(river_pts[i], river_pts[i + 1], Color("3f7fa8"), river_w)
+	for i in range(river_pts.size() - 1):
+		draw_line(river_pts[i], river_pts[i + 1], Color("6fb2d6"), river_w * 0.45)
+
+
+func _draw_bridges() -> void:
+	for b in bridges:
+		var r: Rect2 = b["rect"]
+		draw_set_transform(r.get_center(), deg_to_rad(float(b["angle"])), Vector2.ONE)
+		draw_rect(Rect2(-r.size.x * 0.5, -r.size.y * 0.5, r.size.x, r.size.y), Color("6a4f30"))
+		draw_rect(Rect2(-r.size.x * 0.5, -r.size.y * 0.5, r.size.x, r.size.y), Color("8a6a42"), false, 3.0)
+		for i in 5:
+			var x: float = -r.size.x * 0.5 + float(i) * r.size.x / 4.0
+			draw_line(Vector2(x, -r.size.y * 0.5), Vector2(x, r.size.y * 0.5), Color("5a4230"), 2.0)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _draw_wall() -> void:
+	var prev := _ellipse_point(0.0, 1.0)
+	for i in range(1, 97):
+		var cur := _ellipse_point(TAU * float(i) / 96.0, 1.0)
+		draw_line(prev, cur, Color("3a3229"), 24.0)
+		draw_line(prev, cur, Color("6e6252"), 14.0)
+		prev = cur
+	## 垛口
+	for i in 72:
+		var a := TAU * float(i) / 72.0
+		var p := _ellipse_point(a, 1.0)
+		var n := (p - center).normalized()
+		draw_line(p, p + n * 14.0, Color("574c3e"), 10.0)
 
 
 func _draw_nature() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 99
-	for i in 90:
-		var p := Vector2(rng.randf_range(40.0, arena_size.x - 40.0), rng.randf_range(40.0, arena_size.y - 40.0))
-		if _is_cleared(p):
-			continue
-		if rng.randf() < 0.5:
-			_draw_tree(p, rng.randf_range(16.0, 24.0))
-		else:
-			draw_circle(p, rng.randf_range(6.0, 10.0), Color("355f32"))
+	for t in _trees:
+		_draw_tree(t["pos"], float(t["size"]))
 
 
 func _draw_tree(c: Vector2, s: float) -> void:
-	draw_rect(Rect2(c + Vector2(-3, 0), Vector2(6, 12)), Color("5a4230"))
-	draw_circle(c + Vector2(0, -s * 0.9), s, Color("2f5230"))
+	draw_rect(Rect2(c + Vector2(-3.0, 0.0), Vector2(6.0, s * 0.55)), Color("5a4230"))
+	draw_circle(c + Vector2(0.0, -s * 0.9), s, Color("2f5230"))
 	draw_circle(c + Vector2(-s * 0.4, -s * 1.3), s * 0.6, Color("3d6638"))
 
 
-func _draw_lamp(c: Vector2) -> void:
-	draw_rect(Rect2(c + Vector2(-2, -26), Vector2(4, 26)), Color("4a3826"))
-	draw_circle(c + Vector2(0, -28), 6.0, Color("f0d878"))
-	draw_circle(c + Vector2(0, -28), 10.0, Color(1.0, 0.9, 0.5, 0.25))
-
-
-# ---------------------------------------------------------------- 火影岩
-
+## 火影岩：北面崖壁上凿出的四张脸
 func _draw_mountain() -> void:
-	## 山体
-	for d in [Vector2(700, 60), Vector2(820, 40), Vector2(980, 30), Vector2(1140, 40), Vector2(1280, 60),
-			Vector2(760, 90), Vector2(980, 80), Vector2(1200, 90)]:
-		draw_circle(d, 70.0, Color("6e6658"))
-	## 四张脸
-	for fx in [800.0, 940.0, 1080.0, 1220.0]:
-		_draw_face(Vector2(fx, 78.0))
+	var b := _building("hokage_rock")
+	var r: Rect2 = (b.get("rect", Rect2(1450, 150, 1100, 230)) as Rect2)
+	## 崖壁：几团深浅不一的岩体堆出起伏
+	for d in [
+		Vector2(90.0, 150.0), Vector2(300.0, 96.0), Vector2(560.0, 140.0), Vector2(820.0, 86.0),
+		Vector2(1030.0, 152.0), Vector2(200.0, 180.0), Vector2(700.0, 186.0),
+	]:
+		draw_circle(r.position + d, 124.0, Color("615949"))
+	for d2 in [Vector2(180.0, 150.0), Vector2(640.0, 170.0), Vector2(950.0, 140.0)]:
+		draw_circle(r.position + d2, 98.0, Color("7a7160"))
+	## 四张脸：凿在岩壁上的浮雕
+	for fx in [0.16, 0.38, 0.60, 0.82]:
+		_draw_face(Vector2(r.position.x + r.size.x * fx, r.position.y + r.size.y * 0.62))
+	draw_rect(Rect2(r.position.x - 30.0, r.end.y - 24.0, r.size.x + 60.0, 24.0), Color("453f34"))
 
 
 func _draw_face(c: Vector2) -> void:
-	draw_circle(c, 40.0, Color("a8a094"))
-	draw_rect(Rect2(c + Vector2(-16, -8), Vector2(9, 6)), Color("4a4640"))
-	draw_rect(Rect2(c + Vector2(7, -8), Vector2(9, 6)), Color("4a4640"))
-	draw_line(c + Vector2(-12, 12), c + Vector2(12, 12), Color("4a4640"), 2.0)
+	draw_circle(c, 40.0, Color("4a4438"))
+	draw_circle(c, 35.0, Color("b0a89a"))
+	## 头发块
+	draw_rect(Rect2(c + Vector2(-32.0, -40.0), Vector2(64.0, 13.0)), Color("6a6154"))
+	## 眼、鼻、嘴
+	draw_rect(Rect2(c + Vector2(-15.0, -8.0), Vector2(10.0, 6.0)), Color("3a3630"))
+	draw_rect(Rect2(c + Vector2(5.0, -8.0), Vector2(10.0, 6.0)), Color("3a3630"))
+	draw_rect(Rect2(c + Vector2(-2.0, 2.0), Vector2(4.0, 10.0)), Color("8a8272"))
+	draw_line(c + Vector2(-11.0, 18.0), c + Vector2(11.0, 18.0), Color("3a3630"), 2.0)
 
 
-# ---------------------------------------------------------------- 建筑
-
-func _draw_building(b: Dictionary) -> void:
-	var r: Rect2 = b["rect"]
-	var wall: Color = b["wall"]
-	var roof: Color = b["roof"]
-	var trim: Color = b["trim"]
-	var style: String = b["style"]
-	## 屋檐投影
-	draw_rect(r.grow(7), roof.darkened(0.45))
-	## 屋顶（上 60%）
-	var roof_h := r.size.y * 0.6
-	var roof_r := Rect2(r.position, Vector2(r.size.x, roof_h))
-	draw_rect(roof_r, roof)
-	for i in 4:
-		var yy: float = r.position.y + roof_h * float(i + 1) / 5.0
-		draw_line(Vector2(r.position.x + 5, yy), Vector2(r.end.x - 5, yy), roof.darkened(0.22), 1.5)
-	## 正面墙
-	var wall_r := Rect2(Vector2(r.position.x, r.position.y + roof_h), Vector2(r.size.x, r.size.y - roof_h))
-	draw_rect(wall_r, wall)
-	draw_line(Vector2(r.position.x, r.end.y), Vector2(r.end.x, r.end.y), wall.darkened(0.4), 3.0)
-	## 门
-	var door := Rect2(r.get_center().x - 13, r.end.y - 42, 26, 42)
-	draw_rect(door, Color("3a2c20"))
-	draw_rect(door, trim, false, 1.5)
-	## 两侧窗
-	var win_y := r.position.y + roof_h + 12
-	for sx in [r.position.x + 22, r.end.x - 44]:
-		var win := Rect2(sx, win_y, 22, 22)
-		draw_rect(win, Color("7fa8c8"))
-		draw_rect(win, trim, false, 1.5)
-		draw_line(win.position + Vector2(11, 0), win.position + Vector2(11, 22), trim, 1.0)
-	## 名称招牌
-	draw_string(Data.font(), r.position + Vector2(8, 22), Data.s(String(b["key"])),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, trim)
-	_style_extras(style, r, wall, wall_r, trim)
+func _draw_gates() -> void:
+	for g in gate_list:
+		var r: Rect2 = g["rect"]
+		_draw_torii_gate(r.get_center(), String(g["direction"]))
+	## 待出发时大门发光
+	if Flow.pending_mission != "":
+		draw_arc(GATE_POS + Vector2(0.0, -30.0), 92.0, 0.0, TAU, 36,
+			Color(1.0, 0.9, 0.5, 0.32 + 0.18 * sin(Time.get_ticks_msec() * 0.005)), 3.0)
 
 
-func _style_extras(style: String, r: Rect2, wall: Color, wall_r: Rect2, trim: Color) -> void:
-	var roof_h := r.size.y * 0.6
-	match style:
-		"hokage":
-			## 屋顶金色徽章 + 顶层楼阁
-			var top := Vector2(r.get_center().x, r.position.y + 16)
-			draw_circle(top, 13.0, Color("e8c84a"))
-			draw_string(Data.font(), top + Vector2(-7, 6), "火", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("7a2e26"))
-			draw_rect(Rect2(r.get_center().x - 40, r.position.y - 26, 80, 26), wall)
-			draw_rect(Rect2(r.get_center().x - 40, r.position.y - 26, 80, 26), trim, false, 1.5)
-		"school":
-			## 屋顶小旗 + 额外窗
-			draw_line(Vector2(r.end.x - 30, r.position.y), Vector2(r.end.x - 30, r.position.y - 24), trim, 2.0)
-			draw_rect(Rect2(r.end.x - 28, r.position.y - 24, 18, 12), Color("c8483a"))
-		"ramen":
-			## 红色波浪遮阳帘
-			var n := 8
-			for i in n:
-				var cx: float = wall_r.position.x + float(i) * wall_r.size.x / n
-				draw_circle(Vector2(cx, wall_r.position.y + 4), 9.0, Color("c84438"))
-		"shop":
-			## 橱窗苦无标记
-			draw_string(Data.font(), Vector2(r.position.x + 26, wall_r.position.y + 30), "卍",
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 16, trim.darkened(0.2))
-		"apartment":
-			## 顶层额外两窗
-			for sx in [r.position.x + 60, r.end.x - 82]:
-				draw_rect(Rect2(sx, r.position.y + roof_h - 26, 20, 18), Color("7fa8c8"))
-				draw_rect(Rect2(sx, r.position.y + roof_h - 26, 20, 18), trim, false, 1.0)
-		"hospital":
-			## 红十字牌
-			var cross := r.get_center() + Vector2(0, roof_h * 0.4)
-			draw_rect(Rect2(cross + Vector2(-4, -12), Vector2(8, 24)), Color("c8383a"))
-			draw_rect(Rect2(cross + Vector2(-12, -4), Vector2(24, 8)), Color("c8383a"))
-		"bath":
-			## 烟囱 + 热气
-			var chx := r.end.x - 30
-			draw_rect(Rect2(chx, r.position.y - 18, 14, 26), trim)
-			draw_arc(Vector2(chx + 7, r.position.y - 24), 6.0, 0.0, PI, 12, Color(0.8, 0.9, 0.95, 0.6), 1.5)
-
-
-# ---------------------------------------------------------------- 交互设施
-
-func _draw_board() -> void:
-	draw_rect(Rect2(BOARD_POS + Vector2(-36, -52), Vector2(72, 44)), Color("8a6a42"))
-	draw_rect(Rect2(BOARD_POS + Vector2(-36, -52), Vector2(72, 44)), Color(0.2, 0.14, 0.08, 0.9), false, 2.0)
-	draw_rect(Rect2(BOARD_POS + Vector2(-4, -8), Vector2(8, 26)), Color("6a4f30"))
-	draw_string(Data.font(), BOARD_POS + Vector2(-30, -30), Data.s("village.board"),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f0e6c8"))
-
-
-func _draw_torii(pos: Vector2) -> void:
-	draw_rect(Rect2(pos + Vector2(-40, -60), Vector2(10, 60)), Color("a03428"))
-	draw_rect(Rect2(pos + Vector2(30, -60), Vector2(10, 60)), Color("a03428"))
-	draw_rect(Rect2(pos + Vector2(-48, -68), Vector2(96, 12)), Color("b8402f"))
-	draw_rect(Rect2(pos + Vector2(-34, -48), Vector2(68, 8)), Color("a03428"))
-
-
-func _draw_shrine() -> void:
-	draw_rect(Rect2(SHRINE_POS + Vector2(-22, -34), Vector2(44, 34)), Color("7a6a58"))
-	draw_colored_polygon(PackedVector2Array([
-		SHRINE_POS + Vector2(-30, -34), SHRINE_POS + Vector2(30, -34), SHRINE_POS + Vector2(0, -58),
-	]), Color("5a4a3a"))
-	draw_rect(Rect2(SHRINE_POS + Vector2(-8, -22), Vector2(16, 22)), Color(0.12, 0.1, 0.08))
-
-
-## 忍具店门口的小摊：遮阳棚 + 摆在台面上的忍具，靠近时发光提示可以交互
-func _draw_shop_stall() -> void:
-	var c := SHOP_POS
-	## 遮阳棚与条纹
-	draw_rect(Rect2(c + Vector2(-54, -52), Vector2(108, 16)), Color("b8402f"))
-	for i in 4:
-		draw_rect(Rect2(c + Vector2(-54 + float(i) * 27.0, -52), Vector2(13, 16)), Color("e8d8b8"))
-	## 台面
-	draw_rect(Rect2(c + Vector2(-46, -24), Vector2(92, 24)), Color("8a6a42"))
-	draw_rect(Rect2(c + Vector2(-46, -24), Vector2(92, 24)), Color("5e4630"), false, 2.0)
-	## 摊上摆的三件忍具
-	Data.draw_weapon_icon(self, "kunai", c + Vector2(-28, -36), 11.0)
-	Data.draw_weapon_icon(self, "shuriken", c + Vector2(0, -36), 11.0)
-	Data.draw_weapon_icon(self, "tanto", c + Vector2(28, -36), 11.0)
-	draw_string(Data.font(), c + Vector2(-42, 16), Data.s("village.shop"),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("f0e6c8"))
-	if player != null and player.global_position.distance_to(c) < INTERACT_RADIUS:
-		draw_arc(c + Vector2(0, -20), 76.0, 0.0, TAU, 32,
-			Color(1.0, 0.9, 0.5, 0.3 + 0.15 * sin(Time.get_ticks_msec() * 0.005)), 2.5)
-
-
-func _draw_village_gate() -> void:
-	var g := GATE_POS
-	var active: bool = Flow.pending_mission != ""
+func _draw_torii_gate(c: Vector2, direction: String) -> void:
+	var horizontal := direction != "E" and direction != "W"
 	## 门柱
-	draw_rect(Rect2(g + Vector2(-44, -70), Vector2(20, 70)), Color("6a5238"))
-	draw_rect(Rect2(g + Vector2(24, -70), Vector2(20, 70)), Color("6a5238"))
-	draw_rect(Rect2(g + Vector2(-48, -78), Vector2(28, 12)), Color("8a7a68"))
-	draw_rect(Rect2(g + Vector2(20, -78), Vector2(28, 12)), Color("8a7a68"))
-	## 横梁 + 瓦顶
-	draw_rect(Rect2(g + Vector2(-58, -100), Vector2(116, 18)), Color("7a5a3c"))
-	draw_rect(Rect2(g + Vector2(-64, -114), Vector2(128, 14)), Color("5a4230"))
-	## 门扇
-	draw_rect(Rect2(g + Vector2(-24, -50), Vector2(48, 50)), Color("4a3826"))
-	## 牌匾
-	draw_string(Data.font(), g + Vector2(-42, -88), Data.s("gate.name"),
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("f0e6c8"))
-	## 待出发时发光提示
-	if active:
-		draw_arc(g + Vector2(0, -40), 78.0, 0.0, TAU, 32, Color(1.0, 0.9, 0.5, 0.35 + 0.2 * sin(Time.get_ticks_msec() * 0.005)), 2.5)
+	if horizontal:
+		draw_rect(Rect2(c + Vector2(-52.0, -74.0), Vector2(18.0, 74.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(34.0, -74.0), Vector2(18.0, 74.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(-70.0, -96.0), Vector2(140.0, 20.0)), Color("8a6a42"))
+		draw_rect(Rect2(c + Vector2(-80.0, -114.0), Vector2(160.0, 16.0)), Color("5a4230"))
+		draw_rect(Rect2(c + Vector2(-26.0, -52.0), Vector2(52.0, 52.0)), Color(0.0, 0.0, 0.0, 0.25))
+	else:
+		draw_rect(Rect2(c + Vector2(-74.0, -52.0), Vector2(74.0, 18.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(-74.0, 34.0), Vector2(74.0, 18.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(-96.0, -70.0), Vector2(20.0, 140.0)), Color("8a6a42"))
+
+
+func _draw_interact_markers() -> void:
+	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.004)
+	for p in [BOARD_POS, SHOP_POS, SHRINE_POS, TORII_POS]:
+		if player != null and player.global_position.distance_to(p) < 260.0:
+			draw_arc(p + Vector2(0.0, -14.0), 40.0, 0.0, TAU, 26,
+				Color(1.0, 0.9, 0.5, 0.18 + 0.22 * pulse), 2.0)
+
+
+## 建筑外观全部委托给 VillageArt（独立静态绘制模块）。
+## 将来换成真正的插画时，只改 village_art.gd 一个文件。
+func _draw_building(b: Dictionary) -> void:
+	VillageArt.draw_building(self, String(b["style"]), b["rect"] as Rect2, String(b["name"]))
