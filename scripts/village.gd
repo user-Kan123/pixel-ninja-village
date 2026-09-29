@@ -11,12 +11,20 @@ extends Node2D
 
 const INTERACT_RADIUS := 72.0
 const WALL_SEGMENTS := 72
+## 全局建筑网格：格距固定、所有建筑都落在格子上，这是"规整"的来源
+const GRID := Vector2(130.0, 116.0)
+const HOUSE_SIZE := Vector2(108.0, 94.0)
 
 var layout: Dictionary = {}
 var arena_size := Vector2(4000.0, 2900.0)
 var center := Vector2(2000.0, 1450.0)
 var wall := Vector2(1780.0, 1280.0)
 var river_w := 78.0
+## 街区制：8 个扇区 × 4 个环带；rings 是环带的归一化半径边界
+var sectors := 8
+var rings: Array = [0.14, 0.36, 0.60, 0.84, 1.0]
+var snap := 10.0
+var gate_clear := 260.0
 
 ## 规范化后的建筑：[{id, name, rect, style, solid, priority}]
 var buildings: Array = []
@@ -24,6 +32,8 @@ var bridges: Array = []
 var gate_list: Array = []
 var river_pts := PackedVector2Array()
 var district_labels: Array = []
+## (扇区, 环带) → 该街区铺什么（house / shop / office / none / forest）
+var _block_styles: Dictionary = {}
 
 ## 交互点（_ready 里从建筑数据推导，不写死坐标）
 var BOARD_POS := Vector2.ZERO
@@ -75,22 +85,36 @@ func _parse_layout() -> void:
 	var wr: Array = layout.get("wall_radius", [1780, 1280])
 	wall = Vector2(float(wr[0]), float(wr[1]))
 
-	buildings.clear()
-	for e in layout.get("buildings", []):
-		buildings.append(_norm_building(e))
+	sectors = int(layout.get("sectors", 8))
+	rings.clear()
+	for rv in layout.get("rings", [0.14, 0.36, 0.60, 0.84, 1.0]):
+		rings.append(float(rv))
+	snap = float(layout.get("snap", 10.0))
+	gate_clear = float(layout.get("gate_clear", 260.0))
 
-	## 填充民居：用固定种子随机摆放，位置每次都一样（可复现，也方便调）
-	_rng.seed = 20260929
-	for area in layout.get("filler_areas", []):
-		_fill_area(area)
-	_sort_buildings()
-
-	## 河：折线 + 宽度
+	## 河：折线 + 宽度（先算出来，后面摆建筑要避让）
 	river_pts = PackedVector2Array()
 	var riv: Dictionary = layout.get("river", {})
 	river_w = float(riv.get("width", 78.0))
 	for p in riv.get("points", []):
 		river_pts.append(Vector2(float(p[0]), float(p[1])))
+
+	buildings.clear()
+	_rng.seed = 20260929
+	## 1) 先放具名建筑：它们占大块，先把位置占住
+	for e in layout.get("landmarks", []):
+		buildings.append(_make_landmark(e))
+	## 2) 街区表：只用来决定"这一格铺什么风格"，以及整块铺林子的特例
+	_block_styles.clear()
+	for blk in layout.get("blocks", []):
+		var sec := int(blk.get("sec", 0))
+		var band := int(blk.get("band", 0))
+		var st := String((blk.get("fill", {}) as Dictionary).get("style", "house"))
+		_block_styles[Vector2i(sec, band)] = st
+		_fill_block(blk)
+	## 3) 全局网格铺满剩下的空隙（规整 + 占满，遇到路 / 河 / 地标 / 门自动跳过）
+	_fill_grid()
+	_sort_buildings()
 
 	bridges.clear()
 	for e in layout.get("bridges", []):
@@ -133,15 +157,300 @@ func _rect_of(e: Dictionary) -> Rect2:
 	return Rect2(float(p[0]), float(p[1]), w, h)
 
 
-func _norm_building(e: Dictionary) -> Dictionary:
+# ---------------------------------------------------------------- 街区制布局
+
+## 具名建筑：在指定街区里按"比例 + 锚点"占位，尺寸由它所在街区的大小决定
+func _make_landmark(e: Dictionary) -> Dictionary:
+	var sec := int(e.get("sec", 0))
+	var band := int(e.get("band", 0))
+	var rect := _landmark_rect(sec, band, float(e.get("ratio", 0.6)), String(e.get("anchor", "center")))
 	return {
 		"id": String(e.get("id", "")),
 		"name": Data.s(String(e.get("name_key", ""))),
-		"rect": _rect_of(e),
+		"rect": rect,
 		"style": String(e.get("style", "house")),
 		"solid": bool(e.get("solid", true)),
 		"priority": String(e.get("priority", "P2")),
+		"variant": 0,
 	}
+
+
+func _sector_span(sec: int) -> Array:
+	var w := 360.0 / float(sectors)
+	var a0 := float(sec) * w - w * 0.5
+	return [deg_to_rad(a0), deg_to_rad(a0 + w)]
+
+
+## 街区（扇区 × 环带）的轴对齐包围盒：四个角 + 可能穿过的正东南西北点
+func _block_bbox(sec: int, band: int) -> Rect2:
+	var sp := _sector_span(sec)
+	var a0 := float(sp[0])
+	var a1 := float(sp[1])
+	var r0 := float(rings[band])
+	var r1 := float(rings[band + 1])
+	var pts: Array = []
+	for a in [a0, a1]:
+		for rr in [r0, r1]:
+			pts.append(_ellipse_point(a, rr))
+	for k in 4:
+		var ca := deg_to_rad(float(k) * 90.0)
+		if ca >= a0 and ca <= a1:
+			pts.append(_ellipse_point(ca, r0))
+			pts.append(_ellipse_point(ca, r1))
+	var minx := INF
+	var miny := INF
+	var maxx := -INF
+	var maxy := -INF
+	for p in pts:
+		minx = minf(minx, p.x)
+		maxx = maxf(maxx, p.x)
+		miny = minf(miny, p.y)
+		maxy = maxf(maxy, p.y)
+	return Rect2(minx, miny, maxx - minx, maxy - miny)
+
+
+## 所有坐标吸附到 snap 网格，这是"规整"的关键
+func _snap_rect(r: Rect2) -> Rect2:
+	return Rect2(
+		roundf(r.position.x / snap) * snap,
+		roundf(r.position.y / snap) * snap,
+		maxf(roundf(r.size.x / snap) * snap, snap),
+		maxf(roundf(r.size.y / snap) * snap, snap)
+	)
+
+
+func _anchor_offset(anchor: String) -> Vector2:
+	match anchor:
+		"n":
+			return Vector2(0.0, -1.0)
+		"s":
+			return Vector2(0.0, 1.0)
+		"w":
+			return Vector2(-1.0, 0.0)
+		"e":
+			return Vector2(1.0, 0.0)
+		"nw":
+			return Vector2(-1.0, -1.0)
+		"ne":
+			return Vector2(1.0, -1.0)
+		"sw":
+			return Vector2(-1.0, 1.0)
+		"se":
+			return Vector2(1.0, 1.0)
+	return Vector2.ZERO
+
+
+## 街区在"径向 / 切向"上的真实尺寸（不能用轴对齐包围盒：东西朝向的街区
+## 包围盒又高又窄，会把人撑成巨型长方形）
+func _block_local(sec: int, band: int) -> Dictionary:
+	var sp := _sector_span(sec)
+	var mid := (float(sp[0]) + float(sp[1])) * 0.5
+	var r0 := float(rings[band])
+	var r1 := float(rings[band + 1])
+	var rm := (r0 + r1) * 0.5
+	var reff := _radius_along(mid)
+	return {
+		"mid": mid,
+		"len_r": (r1 - r0) * reff,
+		"len_t": (float(sp[1]) - float(sp[0])) * rm * reff,
+		"ux": sin(mid),
+		"uy": -cos(mid),
+		"center": _ellipse_point(mid, rm),
+	}
+
+
+## 椭圆在某个方位上的半径（像素）
+func _radius_along(a: float) -> float:
+	var sx := sin(a) / maxf(wall.x, 1.0)
+	var cy := cos(a) / maxf(wall.y, 1.0)
+	return 1.0 / maxf(sqrt(sx * sx + cy * cy), 0.0001)
+
+
+## 在街区里按比例取一块矩形：径向 / 切向哪个是横的就对哪一边
+func _block_rect(sec: int, band: int, ratio: float, anchor: String) -> Rect2:
+	var L := _block_local(sec, band)
+	var len_r := float(L["len_r"])
+	var len_t := float(L["len_t"])
+	## 径向主要朝东西 → 宽是径向、高是切向；朝南北则相反
+	var radial_horizontal := absf(float(L["ux"])) >= absf(float(L["uy"]))
+	var w := (len_r if radial_horizontal else len_t) * ratio
+	var h := (len_t if radial_horizontal else len_r) * ratio
+	var full_w := w / maxf(ratio, 0.01)
+	var full_h := h / maxf(ratio, 0.01)
+	var c: Vector2 = L["center"]
+	var off := _anchor_offset(anchor)
+	var cx := c.x + off.x * (full_w - w) * 0.5
+	var cy := c.y + off.y * (full_h - h) * 0.5
+	return _snap_rect(Rect2(cx - w * 0.5, cy - h * 0.5, w, h))
+
+
+func _landmark_rect(sec: int, band: int, ratio: float, anchor: String) -> Rect2:
+	return _block_rect(sec, band, ratio, anchor)
+
+
+## 特殊街区：整块铺成林子（其余街区交给下面的全局网格）
+func _fill_block(blk: Dictionary) -> void:
+	var sec := int(blk.get("sec", 0))
+	var band := int(blk.get("band", 0))
+	if band < 0 or band + 1 >= rings.size():
+		return
+	var f: Dictionary = blk.get("fill", {})
+	var style := String(f.get("style", "house"))
+	if style != "forest":
+		return
+	buildings.append({
+		"id": "forest_%d_%d" % [sec, band],
+		"name": "",
+		"rect": _block_rect(sec, band, 0.94, "center"),
+		"style": "forest",
+		"solid": false,
+		"priority": "P2",
+		"variant": 0,
+	})
+
+
+## 全局网格铺满：每格一栋楼，全部对齐在 GRID 上。
+## 跳过：墙外 / 道路上 / 河上 / 地标占位 / 门口。这就是"规整且占满空隙"的做法。
+func _fill_grid() -> void:
+	var gx := int(ceil(arena_size.x / GRID.x))
+	var gy := int(ceil(arena_size.y / GRID.y))
+	var idx := 0
+	var rej := {"wall": 0, "road": 0, "river": 0, "none": 0, "built": 0, "gate": 0, "total": 0}
+	for j in gy:
+		for i in gx:
+			rej["total"] = int(rej["total"]) + 1
+			var c := Vector2((float(i) + 0.5) * GRID.x, (float(j) + 0.5) * GRID.y)
+			if not _inside_wall(c, 80.0):
+				rej["wall"] = int(rej["wall"]) + 1
+				continue
+			if _on_road(c):
+				rej["road"] = int(rej["road"]) + 1
+				continue
+			if _dist_to_river(c) < river_w * 0.5 + 76.0:
+				rej["river"] = int(rej["river"]) + 1
+				continue
+			var blk := _block_of_point(c)
+			var style := String(_block_styles.get(blk, "house"))
+			if style == "none" or style == "forest":
+				rej["none"] = int(rej["none"]) + 1
+				continue
+			var size := _size_for(style)
+			## 住宅区里偶尔来一栋"双格宽"的长屋，避免整村建筑尺寸过于单一
+			if style == "house" and (i * 5 + j * 3) % 7 == 0:
+				size = Vector2(size.x + GRID.x, size.y)
+			var rect := _snap_rect(Rect2(c.x - size.x * 0.5, c.y - size.y * 0.5, size.x, size.y))
+			if _rect_hits_building(rect):
+				rej["built"] = int(rej["built"]) + 1
+				continue
+			if _rect_near_gate(rect):
+				rej["gate"] = int(rej["gate"]) + 1
+				continue
+			buildings.append({
+				"id": "grid_%d_%d" % [i, j],
+				"name": "",
+				"rect": rect,
+				"style": style,
+				"solid": true,
+				"priority": "P2",
+				"variant": (i * 2 + j * 3) % 4,
+			})
+			idx += 1
+
+
+## 不同用途的建筑尺寸略有差异，避免整村一个样
+func _size_for(style: String) -> Vector2:
+	match style:
+		"shop":
+			return Vector2(104.0, 90.0)
+		"office":
+			return Vector2(118.0, 102.0)
+		"apartment":
+			return Vector2(118.0, 102.0)
+	return HOUSE_SIZE
+
+
+## 点是否落在道路上（环路或放射主路，含路宽）
+func _on_road(p: Vector2) -> bool:
+	var d := _norm_radius(p)
+	if d < float(rings[0]) + 0.015:
+		return true
+	for i in range(1, rings.size() - 1):
+		if absf(d - float(rings[i])) < 0.030:
+			return true
+	var step := TAU / float(sectors)
+	var m := fmod(_ang_rad(p) + step * 0.5, step) - step * 0.5
+	return absf(m) < 0.030
+
+
+## 点落在哪个街区（扇区, 环带）
+func _block_of_point(p: Vector2) -> Vector2i:
+	var step := TAU / float(sectors)
+	var sec := int(floor((_ang_rad(p) + step * 0.5) / step))
+	sec = ((sec % sectors) + sectors) % sectors
+	var d := _norm_radius(p)
+	var band := 0
+	for i in range(1, rings.size() - 1):
+		if d >= float(rings[i]):
+			band = i
+	return Vector2i(sec, band)
+
+
+func _rect_in_block(r: Rect2, sec: int, band: int) -> bool:
+	var sp := _sector_span(sec)
+	var mid := (float(sp[0]) + float(sp[1])) * 0.5
+	var half := deg_to_rad(360.0 / float(sectors) * 0.5) - 0.02
+	var r0 := float(rings[band]) + 0.014
+	var r1 := float(rings[band + 1]) - 0.014
+	for p in [r.position, Vector2(r.end.x, r.position.y), Vector2(r.position.x, r.end.y), r.end, r.get_center()]:
+		if not _inside_wall(p, 40.0):
+			return false
+		var d := _norm_radius(p)
+		if d < r0 or d > r1:
+			return false
+		if absf(_ang_diff(_ang_rad(p), mid)) > half:
+			return false
+	return true
+
+
+func _rect_hits_building(r: Rect2) -> bool:
+	for b in buildings:
+		if (b["rect"] as Rect2).grow(12.0).intersects(r):
+			return true
+	return false
+
+
+func _rect_hits_river(r: Rect2) -> bool:
+	var m := river_w * 0.5 + 16.0
+	for p in [r.position, Vector2(r.end.x, r.position.y), Vector2(r.position.x, r.end.y), r.end, r.get_center()]:
+		if _dist_to_river(p) < m:
+			return true
+	return false
+
+
+func _rect_near_gate(r: Rect2) -> bool:
+	for e in layout.get("gates", []):
+		if _rect_of(e).grow(gate_clear).intersects(r):
+			return true
+	return false
+
+
+## 归一化椭圆半径（0 = 圆心，1 = 围墙）
+func _norm_radius(p: Vector2) -> float:
+	var nx := (p.x - center.x) / maxf(wall.x, 1.0)
+	var ny := (p.y - center.y) / maxf(wall.y, 1.0)
+	return sqrt(nx * nx + ny * ny)
+
+
+## 以正北为 0、顺时针的方位角（弧度）
+func _ang_rad(p: Vector2) -> float:
+	return atan2(p.x - center.x, -(p.y - center.y))
+
+
+func _ang_diff(a: float, b: float) -> float:
+	var d := fmod(a - b + PI, TAU)
+	if d < 0.0:
+		d += TAU
+	return d - PI
 
 
 func _sort_buildings() -> void:
@@ -687,8 +996,8 @@ func _decor_free(p: Vector2, clearance: float) -> bool:
 	var nx := (p.x - center.x) / wall.x
 	var ny := (p.y - center.y) / wall.y
 	var d := sqrt(nx * nx + ny * ny)
-	for rr in RING_RADII:
-		if absf(d - float(rr)) < 0.045:
+	for i in range(1, rings.size() - 1):
+		if absf(d - float(rings[i])) < 0.04:
 			return false
 	var ang := rad_to_deg(atan2(p.x - center.x, -(p.y - center.y)))
 	if ang < 0.0:
@@ -750,10 +1059,11 @@ func _draw_district_tints() -> void:
 func _draw_roads() -> void:
 	var road := Color("8a7a5c")
 	var edge := Color("6d6047")
-	for rr in RING_RADII:
-		var prev := _ellipse_point(0.0, float(rr))
+	for idx in range(1, rings.size() - 1):
+		var rr := float(rings[idx])
+		var prev := _ellipse_point(0.0, rr)
 		for i in range(1, 97):
-			var cur := _ellipse_point(TAU * float(i) / 96.0, float(rr))
+			var cur := _ellipse_point(TAU * float(i) / 96.0, rr)
 			draw_line(prev, cur, edge, 46.0)
 			draw_line(prev, cur, road, 38.0)
 			prev = cur
@@ -888,4 +1198,4 @@ func _draw_interact_markers() -> void:
 ## 建筑外观全部委托给 VillageArt（独立静态绘制模块）。
 ## 将来换成真正的插画时，只改 village_art.gd 一个文件。
 func _draw_building(b: Dictionary) -> void:
-	VillageArt.draw_building(self, String(b["style"]), b["rect"] as Rect2, String(b["name"]))
+	VillageArt.draw_building(self, String(b["style"]), b["rect"] as Rect2, String(b["name"]), int(b.get("variant", 0)))

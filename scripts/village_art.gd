@@ -9,7 +9,13 @@ extends RefCounted
 ## c.draw_texture_rect(...) 即可，村庄逻辑一行都不用动。
 
 
-static func draw_building(c: CanvasItem, style: String, r: Rect2, label: String) -> void:
+## 当前绘制的建筑"变体号"：用来给屋顶/墙面做细微配色变化，
+## 这样一整排建筑不会长得一模一样（由 village.gd 按格子序号传入）。
+static var _variant := 0
+
+
+static func draw_building(c: CanvasItem, style: String, r: Rect2, label: String, variant := 0) -> void:
+	_variant = variant
 	match style:
 		"hokage": _b_hokage(c, r)
 		"hokage_rock": pass
@@ -41,8 +47,22 @@ static func draw_building(c: CanvasItem, style: String, r: Rect2, label: String)
 		draw_sign(c, r, label)
 
 
+## 变体配色：0 = 原色，1 = 亮一档，2 = 暗一档，3 = 偏暖
+static func _tint(base: Color) -> Color:
+	match _variant % 4:
+		1:
+			return base.lightened(0.10)
+		2:
+			return base.darkened(0.10)
+		3:
+			return base.lerp(Color(0.88, 0.84, 0.78), 0.22)
+	return base
+
+
 ## 通用房体：屋檐投影 + 屋顶 + 墙 + 门 + 两扇窗。返回正面墙的矩形。
 static func _base(c: CanvasItem, r: Rect2, wall_col: Color, roof_col: Color, trim: Color) -> Rect2:
+	wall_col = _tint(wall_col)
+	roof_col = _tint(roof_col)
 	c.draw_rect(r.grow(6.0), roof_col.darkened(0.45))
 	var roof_h := r.size.y * 0.55
 	c.draw_rect(Rect2(r.position, Vector2(r.size.x, roof_h)), roof_col)
@@ -140,17 +160,21 @@ static func _b_school(c: CanvasItem, r: Rect2) -> void:
 
 
 static func _b_training(c: CanvasItem, r: Rect2) -> void:
-	c.draw_rect(r, Color("7a6a4c"))
-	c.draw_rect(r, Color("8a7a58"), false, 4.0)
+	## 演习场：草地中间一块夯实的空地（不是一整块木板），四周留草，场上有木桩与靶子
+	var inner := r.grow(-34.0)
+	c.draw_rect(inner, _tint(Color("8a7a58")))
+	c.draw_rect(inner.grow(6.0), Color("6f5f42"), false, 3.0)
+	for i in 8:
+		var fx := inner.position.x + float(i) * inner.size.x / 7.0
+		c.draw_line(Vector2(fx, inner.position.y - 8.0), Vector2(fx, inner.position.y), Color("5a4a32"), 3.0)
+		c.draw_line(Vector2(fx, inner.end.y), Vector2(fx, inner.end.y + 8.0), Color("5a4a32"), 3.0)
 	for i in 3:
-		var p := Vector2(r.position.x + 46.0 + float(i) * (r.size.x - 92.0) / 2.0, r.get_center().y + 10.0)
+		var p := Vector2(inner.position.x + 46.0 + float(i) * (inner.size.x - 92.0) / 2.0, inner.get_center().y + 8.0)
 		c.draw_rect(Rect2(p + Vector2(-6.0, -34.0), Vector2(12.0, 44.0)), Color("6a4f30"))
 		c.draw_circle(p + Vector2(0.0, -38.0), 9.0, Color("8a6a42"))
-	c.draw_circle(Vector2(r.end.x - 44.0, r.position.y + 44.0), 18.0, Color("d8d0c0"))
-	c.draw_circle(Vector2(r.end.x - 44.0, r.position.y + 44.0), 9.0, Color("c8483a"))
-	for i in 6:
-		var fx := r.position.x + 10.0 + float(i) * (r.size.x - 20.0) / 5.0
-		c.draw_line(Vector2(fx, r.position.y), Vector2(fx, r.position.y + 14.0), Color("6a5a3c"), 3.0)
+	var t := Vector2(inner.end.x - 46.0, inner.position.y + 46.0)
+	c.draw_circle(t, 18.0, Color("d8d0c0"))
+	c.draw_circle(t, 9.0, Color("c8483a"))
 
 
 static func _b_tower(c: CanvasItem, r: Rect2) -> void:

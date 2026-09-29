@@ -11,6 +11,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	var p = village.player
+	print("BUILDINGS ", village.buildings.size(), "  TREES ", village._trees.size())
 	var cam: Camera2D = p.get_viewport().get_camera_2d()
 	if cam == null:
 		print("SHOT ERROR: no camera")
