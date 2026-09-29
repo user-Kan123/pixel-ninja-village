@@ -12,6 +12,12 @@ func _ready() -> void:
 	await get_tree().process_frame
 	var p = village.player
 	print("BUILDINGS ", village.buildings.size(), "  TREES ", village._trees.size())
+	for b in village.buildings:
+		var id := String(b["id"])
+		if id.begins_with("grid_") or id.begins_with("forest_"):
+			continue
+		var r: Rect2 = b["rect"]
+		print("LM ", id, "  rect=", r.position, " size=", r.size)
 	var cam: Camera2D = p.get_viewport().get_camera_2d()
 	if cam == null:
 		print("SHOT ERROR: no camera")
@@ -24,34 +30,34 @@ func _ready() -> void:
 	cam.position_smoothing_enabled = false
 
 	## 1) 整村俯瞰
-	cam.zoom = Vector2(0.30, 0.30)
+	cam.zoom = Vector2(0.26, 0.26)
 	p.global_position = village.center
 	await get_tree().create_timer(0.4).timeout
 	await _shot("village_overview.png")
 
-	## 2) 火影区近景
-	cam.zoom = Vector2(0.62, 0.62)
-	p.global_position = Vector2(2000, 1120)
+	## 2) 火影区近景（岩 + 火影楼 + 公园A）
+	cam.zoom = Vector2(0.55, 0.55)
+	p.global_position = Vector2(3600, 900)
 	await get_tree().create_timer(0.3).timeout
 	await _shot("village_hokage.png")
 
 	## 3) 商业区 + 中忍考试森林
-	cam.zoom = Vector2(0.62, 0.62)
-	p.global_position = Vector2(2800, 1400)
+	cam.zoom = Vector2(0.55, 0.55)
+	p.global_position = Vector2(5400, 2200)
 	await get_tree().create_timer(0.3).timeout
 	await _shot("village_market.png")
 
-	## 4) 河对岸与正门
-	cam.zoom = Vector2(0.62, 0.62)
-	p.global_position = Vector2(1600, 2200)
+	## 4) 河对岸与宇智波村落
+	cam.zoom = Vector2(0.55, 0.55)
+	p.global_position = Vector2(2700, 4100)
 	await get_tree().create_timer(0.3).timeout
 	await _shot("village_riverside.png")
 
-	## 5) 北面：火影岩与围墙
-	cam.zoom = Vector2(0.62, 0.62)
-	p.global_position = Vector2(2000, 480)
+	## 5) 西侧训练场群
+	cam.zoom = Vector2(0.42, 0.42)
+	p.global_position = Vector2(700, 2600)
 	await get_tree().create_timer(0.3).timeout
-	await _shot("village_rock.png")
+	await _shot("village_training.png")
 
 	get_tree().quit()
 

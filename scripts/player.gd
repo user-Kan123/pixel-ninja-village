@@ -18,7 +18,7 @@ enum State { MOVE, ATTACK, SEALING, AIM, CHARGE, GROUND, CHANNEL, DEAD }
 const MAX_HP_BASE := 100.0
 const MAX_CHAKRA_BASE := 100.0
 ## 移动速度：已按手感反馈降到原值的 60%（330 → 198）。想整体调快/调慢只改这一个数。
-const MOVE_SPEED := 198.0
+const MOVE_SPEED := 140.0
 const CHAKRA_REGEN := 9.0
 ## 武器槽：主手 + 副手，Q 切换。空字符串 = 该槽没装忍具。
 const WEAPON_SLOT_COUNT := 2

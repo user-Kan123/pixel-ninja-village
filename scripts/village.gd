@@ -9,11 +9,11 @@ extends Node2D
 ## 本文件只负责"把数据画出来"和交互。建筑外观是程序化绘制的像素插画（暂无外部素材，
 ## 以后要换成真图，只需替换 _draw_building() 这一层）。
 
-const INTERACT_RADIUS := 72.0
-const WALL_SEGMENTS := 72
+const INTERACT_RADIUS := 96.0
+const WALL_SEGMENTS := 96
 ## 全局建筑网格：格距固定、所有建筑都落在格子上，这是"规整"的来源
-const GRID := Vector2(130.0, 116.0)
-const HOUSE_SIZE := Vector2(108.0, 94.0)
+const GRID := Vector2(300.0, 268.0)
+const HOUSE_SIZE := Vector2(252.0, 226.0)
 
 var layout: Dictionary = {}
 var arena_size := Vector2(4000.0, 2900.0)
@@ -142,12 +142,12 @@ func _parse_layout() -> void:
 		})
 
 	## 交互点：由建筑推导，改布局不用改代码
-	BOARD_POS = _front_of("mission_desk", 46.0)
-	SHOP_POS = _front_of("tool_shop", 46.0)
-	SHRINE_POS = _front_of("player_apartment", 46.0)
-	TORII_POS = _front_of("training_03", 40.0)
+	BOARD_POS = _front_of("mission_desk", 60.0)
+	SHOP_POS = _front_of("tool_shop", 60.0)
+	SHRINE_POS = _front_of("player_apartment", 60.0)
+	TORII_POS = _front_of("training_a", 56.0)
 	var mg := _building("main_gate")
-	GATE_POS = (mg.get("rect", Rect2(1900, 2640, 220, 130)) as Rect2).get_center() + Vector2(0.0, -20.0)
+	GATE_POS = (mg.get("rect", Rect2(3410, 4730, 380, 200)) as Rect2).get_center() + Vector2(0.0, -30.0)
 
 
 func _rect_of(e: Dictionary) -> Rect2:
@@ -163,7 +163,7 @@ func _rect_of(e: Dictionary) -> Rect2:
 func _make_landmark(e: Dictionary) -> Dictionary:
 	var sec := int(e.get("sec", 0))
 	var band := int(e.get("band", 0))
-	var rect := _landmark_rect(sec, band, float(e.get("ratio", 0.6)), String(e.get("anchor", "center")))
+	var rect := _landmark_rect(sec, band, float(e.get("ratio", 0.6)), String(e.get("anchor", "center")), String(e.get("style", "house")))
 	return {
 		"id": String(e.get("id", "")),
 		"name": Data.s(String(e.get("name_key", ""))),
@@ -266,26 +266,42 @@ func _radius_along(a: float) -> float:
 	return 1.0 / maxf(sqrt(sx * sx + cy * cy), 0.0001)
 
 
+## 各类建筑的期望长宽比（宽/高，≈贴图地基形状）。
+## 斜向扇区和外圈街区的天然形状是细条，不规整会把建筑拉成筷子/薄饼
+const PREFER_AR := {
+	"watch": 0.75, "tower": 0.80, "vault": 1.30, "hospital": 1.60,
+	"hokage": 1.50, "office": 1.40, "school": 1.05, "apartment": 1.00,
+	"clan": 1.50, "shop": 1.10, "ramen": 1.10, "tools": 1.30,
+	"bath": 1.10, "theater": 1.50, "house": 1.00, "residence": 1.00,
+	"training": 0.85, "cemetery": 1.50, "stone": 1.50, "wharf": 2.00,
+}
+
 ## 在街区里按比例取一块矩形：径向 / 切向哪个是横的就对哪一边
-func _block_rect(sec: int, band: int, ratio: float, anchor: String) -> Rect2:
+func _block_rect(sec: int, band: int, ratio: float, anchor: String, style := "") -> Rect2:
 	var L := _block_local(sec, band)
 	var len_r := float(L["len_r"])
 	var len_t := float(L["len_t"])
 	## 径向主要朝东西 → 宽是径向、高是切向；朝南北则相反
 	var radial_horizontal := absf(float(L["ux"])) >= absf(float(L["uy"]))
-	var w := (len_r if radial_horizontal else len_t) * ratio
-	var h := (len_t if radial_horizontal else len_r) * ratio
-	var full_w := w / maxf(ratio, 0.01)
-	var full_h := h / maxf(ratio, 0.01)
+	var bw := len_r if radial_horizontal else len_t
+	var bh := len_t if radial_horizontal else len_r
+	var w := bw * ratio
+	var h := bh * ratio
+	## 长宽比规整：面积不变，把细条修回该风格该有的形状（面积填充类除外）
+	if style != "" and not style in ["forest", "park", "hokage_rock"]:
+		var target: float = PREFER_AR.get(style, clampf(w / maxf(h, 1.0), 0.8, 1.6))
+		var area := w * h
+		w = clampf(sqrt(area * target), 90.0, bw * 0.92)
+		h = clampf(area / maxf(w, 1.0), 90.0, bh * 0.92)
 	var c: Vector2 = L["center"]
 	var off := _anchor_offset(anchor)
-	var cx := c.x + off.x * (full_w - w) * 0.5
-	var cy := c.y + off.y * (full_h - h) * 0.5
+	var cx := c.x + off.x * (bw - w) * 0.5
+	var cy := c.y + off.y * (bh - h) * 0.5
 	return _snap_rect(Rect2(cx - w * 0.5, cy - h * 0.5, w, h))
 
 
-func _landmark_rect(sec: int, band: int, ratio: float, anchor: String) -> Rect2:
-	return _block_rect(sec, band, ratio, anchor)
+func _landmark_rect(sec: int, band: int, ratio: float, anchor: String, style := "") -> Rect2:
+	return _block_rect(sec, band, ratio, anchor, style)
 
 
 ## 特殊街区：整块铺成林子（其余街区交给下面的全局网格）
@@ -334,10 +350,16 @@ func _fill_grid() -> void:
 			if style == "none" or style == "forest":
 				rej["none"] = int(rej["none"]) + 1
 				continue
+			## 核心规则：建筑必须临街。不在道路两侧的格子一律留空（后院 / 绿地），
+			## 这样建筑自然排成"沿街两排"，不会膏状连片浮在草地上
+			if not _street_front(c):
+				rej["offstreet"] = int(rej.get("offstreet", 0)) + 1
+				continue
+			## 沿街也隔四空一，留出巷子和间隙
+			if (i * 5 + j * 3) % 4 == 0:
+				rej["gap"] = int(rej.get("gap", 0)) + 1
+				continue
 			var size := _size_for(style)
-			## 住宅区里偶尔来一栋"双格宽"的长屋，避免整村建筑尺寸过于单一
-			if style == "house" and (i * 5 + j * 3) % 7 == 0:
-				size = Vector2(size.x + GRID.x, size.y)
 			var rect := _snap_rect(Rect2(c.x - size.x * 0.5, c.y - size.y * 0.5, size.x, size.y))
 			if _rect_hits_building(rect):
 				rej["built"] = int(rej["built"]) + 1
@@ -361,25 +383,47 @@ func _fill_grid() -> void:
 func _size_for(style: String) -> Vector2:
 	match style:
 		"shop":
-			return Vector2(104.0, 90.0)
+			return Vector2(244.0, 214.0)
 		"office":
-			return Vector2(118.0, 102.0)
+			return Vector2(272.0, 238.0)
 		"apartment":
-			return Vector2(118.0, 102.0)
+			return Vector2(272.0, 238.0)
 	return HOUSE_SIZE
 
 
-## 点是否落在道路上（环路或放射主路，含路宽）
+## 点是否"压在道路上"（环路、放射主路或中心广场，含建筑半个身位的安全距离）
 func _on_road(p: Vector2) -> bool:
 	var d := _norm_radius(p)
-	if d < float(rings[0]) + 0.015:
+	## 中心广场
+	if d < 0.075:
 		return true
+	## 环路：归一化 0.050 ≈ 路面半宽 30px + 建筑半身位 135px
 	for i in range(1, rings.size() - 1):
-		if absf(d - float(rings[i])) < 0.030:
+		if absf(d - float(rings[i])) < 0.050:
 			return true
+	## 放射主路：到路的垂直距离 = |m| * d（弧度 × 半径），按同样的 165px 判
 	var step := TAU / float(sectors)
 	var m := fmod(_ang_rad(p) + step * 0.5, step) - step * 0.5
-	return absf(m) < 0.030
+	return absf(m) * maxf(d, 0.15) < 0.055
+
+
+## 点是否"临街"：贴着道路两侧约一栋楼深的范围内。
+## 这是"建筑沿街排布"的核心：只有临街格子允许放建筑
+func _street_front(p: Vector2) -> bool:
+	var d := _norm_radius(p)
+	## 广场外圈临街
+	if d >= 0.075 and d < 0.15:
+		return true
+	## 环路两侧
+	for i in range(1, rings.size() - 1):
+		var dist := absf(d - float(rings[i]))
+		if dist >= 0.050 and dist < 0.108:
+			return true
+	## 放射主路两侧
+	var step := TAU / float(sectors)
+	var m := fmod(_ang_rad(p) + step * 0.5, step) - step * 0.5
+	var dist_r := absf(m) * maxf(d, 0.15)
+	return dist_r >= 0.055 and dist_r < 0.115
 
 
 ## 点落在哪个街区（扇区, 环带）
@@ -674,7 +718,7 @@ func accept_mission_from_board(id: String) -> void:
 func _nearest_interactable() -> Dictionary:
 	var spots := [
 		{"pos": BOARD_POS, "kind": "board", "hint": Data.s("building.mission_desk") + " · " + Data.s("village.open")},
-		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("building.training_03") + " · " + Data.s("village.enter")},
+		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("building.training_a") + " · " + Data.s("village.enter")},
 		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("building.apartment") + " · " + Data.s("village.rest")},
 		{"pos": SHOP_POS, "kind": "shop", "hint": Data.s("village.shop") + " · " + Data.s("village.open_shop")},
 	]
@@ -951,28 +995,36 @@ func _build_decor() -> void:
 	_grass.clear()
 	_rng.seed = 424242
 	var tries := 0
-	while _grass.size() < 460 and tries < 6000:
+	while _grass.size() < 900 and tries < 9000:
 		tries += 1
 		var p := _random_in_village()
-		if _decor_free(p, 10.0):
+		if _decor_free(p, 14.0):
 			_grass.append(p)
 	tries = 0
-	while _trees.size() < 170 and tries < 6000:
+	while _trees.size() < 520 and tries < 12000:
 		tries += 1
 		var p2 := _random_in_village()
-		if _decor_free(p2, 34.0):
-			_trees.append({"pos": p2, "size": _rng.randf_range(15.0, 25.0)})
-	## 中忍考试森林：整块加密（这一块不判道路，只看建筑）
-	var ef := _building("exam_forest")
-	if not ef.is_empty():
-		var r: Rect2 = ef["rect"]
-		for i in 90:
+		if _decor_free(p2, 52.0):
+			_trees.append({"pos": p2, "size": _rng.randf_range(22.0, 36.0)})
+	## 中忍考试森林：整块加密（这一块不判道路，只看建筑；自身矩形要排除）
+	for b in buildings:
+		if String(b["style"]) != "forest":
+			continue
+		var r: Rect2 = b["rect"]
+		for i in 170:
 			var p3 := Vector2(
 				_rng.randf_range(r.position.x, r.end.x),
 				_rng.randf_range(r.position.y, r.end.y)
 			)
-			if _decor_free(p3, 16.0):
-				_trees.append({"pos": p3, "size": _rng.randf_range(18.0, 30.0)})
+			var blocked := false
+			for ob in buildings:
+				if String(ob["style"]) == "forest":
+					continue
+				if (ob["rect"] as Rect2).grow(26.0).has_point(p3):
+					blocked = true
+					break
+			if not blocked:
+				_trees.append({"pos": p3, "size": _rng.randf_range(26.0, 44.0)})
 
 
 func _random_in_village() -> Vector2:
@@ -997,13 +1049,13 @@ func _decor_free(p: Vector2, clearance: float) -> bool:
 	var ny := (p.y - center.y) / wall.y
 	var d := sqrt(nx * nx + ny * ny)
 	for i in range(1, rings.size() - 1):
-		if absf(d - float(rings[i])) < 0.04:
+		if absf(d - float(rings[i])) < 0.055:
 			return false
 	var ang := rad_to_deg(atan2(p.x - center.x, -(p.y - center.y)))
 	if ang < 0.0:
 		ang += 360.0
 	var step := fmod(ang, 45.0)
-	if step < 3.5 or step > 41.5:
+	if step < 5.5 or step > 39.5:
 		return false
 	return true
 
@@ -1016,10 +1068,11 @@ func _draw() -> void:
 	_draw_roads()
 	_draw_river()
 	_draw_wall()
-	_draw_nature()
 	_draw_mountain()
 	for b in buildings:
 		_draw_building(b)
+	## 树最后画：装饰生成时已避开建筑，画在上层森林才不会被森林底色盖住
+	_draw_nature()
 	_draw_bridges()
 	_draw_gates()
 	_draw_interact_markers()
@@ -1059,24 +1112,26 @@ func _draw_district_tints() -> void:
 func _draw_roads() -> void:
 	var road := Color("8a7a5c")
 	var edge := Color("6d6047")
+	## 环路：58px 街道
 	for idx in range(1, rings.size() - 1):
 		var rr := float(rings[idx])
 		var prev := _ellipse_point(0.0, rr)
 		for i in range(1, 97):
 			var cur := _ellipse_point(TAU * float(i) / 96.0, rr)
-			draw_line(prev, cur, edge, 46.0)
-			draw_line(prev, cur, road, 38.0)
+			draw_line(prev, cur, edge, 72.0)
+			draw_line(prev, cur, road, 58.0)
 			prev = cur
-	## 八条放射主路
+	## 八条放射路；南北主路（火影大道）加宽到 72px，其余 58px
 	for i in 8:
 		var a := TAU * float(i) / 8.0
 		var p0 := center
 		var p1 := _ellipse_point(a, 1.0)
-		draw_line(p0, p1, edge, 46.0)
-		draw_line(p0, p1, road, 38.0)
-	## 中央广场
-	draw_circle(center, 200.0, edge)
-	draw_circle(center, 190.0, Color("9a8a6a"))
+		var main := i == 0 or i == 4
+		draw_line(p0, p1, edge, 88.0 if main else 72.0)
+		draw_line(p0, p1, road, 72.0 if main else 58.0)
+	## 中心环岛广场
+	draw_circle(center, 170.0, edge)
+	draw_circle(center, 158.0, Color("9a8a6a"))
 
 
 func _ellipse_point(a: float, rr: float) -> Vector2:
@@ -1135,31 +1190,32 @@ func _draw_tree(c: Vector2, s: float) -> void:
 ## 火影岩：北面崖壁上凿出的四张脸
 func _draw_mountain() -> void:
 	var b := _building("hokage_rock")
-	var r: Rect2 = (b.get("rect", Rect2(1450, 150, 1100, 230)) as Rect2)
-	## 崖壁：几团深浅不一的岩体堆出起伏
-	for d in [
-		Vector2(90.0, 150.0), Vector2(300.0, 96.0), Vector2(560.0, 140.0), Vector2(820.0, 86.0),
-		Vector2(1030.0, 152.0), Vector2(200.0, 180.0), Vector2(700.0, 186.0),
-	]:
-		draw_circle(r.position + d, 124.0, Color("615949"))
-	for d2 in [Vector2(180.0, 150.0), Vector2(640.0, 170.0), Vector2(950.0, 140.0)]:
-		draw_circle(r.position + d2, 98.0, Color("7a7160"))
+	var r: Rect2 = (b.get("rect", Rect2(2520, 250, 2160, 420)) as Rect2)
+	## 崖壁：几团深浅不一的岩体堆出起伏（按矩形比例摆位，地图多大都不走样）
+	for fx in [0.06, 0.22, 0.42, 0.62, 0.80, 0.94]:
+		for fy in [0.35, 0.75]:
+			draw_circle(r.position + Vector2(r.size.x * fx, r.size.y * fy),
+				r.size.y * 0.34, Color("615949"))
+	for fx2 in [0.14, 0.50, 0.86]:
+		draw_circle(r.position + Vector2(r.size.x * fx2, r.size.y * 0.42),
+			r.size.y * 0.27, Color("7a7160"))
 	## 四张脸：凿在岩壁上的浮雕
-	for fx in [0.16, 0.38, 0.60, 0.82]:
-		_draw_face(Vector2(r.position.x + r.size.x * fx, r.position.y + r.size.y * 0.62))
-	draw_rect(Rect2(r.position.x - 30.0, r.end.y - 24.0, r.size.x + 60.0, 24.0), Color("453f34"))
+	for fx3 in [0.16, 0.38, 0.60, 0.82]:
+		_draw_face(Vector2(r.position.x + r.size.x * fx3, r.position.y + r.size.y * 0.62), r.size.y)
+	draw_rect(Rect2(r.position.x - 40.0, r.end.y - 30.0, r.size.x + 80.0, 30.0), Color("453f34"))
 
 
-func _draw_face(c: Vector2) -> void:
-	draw_circle(c, 40.0, Color("4a4438"))
-	draw_circle(c, 35.0, Color("b0a89a"))
+func _draw_face(c: Vector2, h: float) -> void:
+	var s := h / 420.0
+	draw_circle(c, 56.0 * s, Color("4a4438"))
+	draw_circle(c, 49.0 * s, Color("b0a89a"))
 	## 头发块
-	draw_rect(Rect2(c + Vector2(-32.0, -40.0), Vector2(64.0, 13.0)), Color("6a6154"))
+	draw_rect(Rect2(c + Vector2(-45.0 * s, -56.0 * s), Vector2(90.0 * s, 18.0 * s)), Color("6a6154"))
 	## 眼、鼻、嘴
-	draw_rect(Rect2(c + Vector2(-15.0, -8.0), Vector2(10.0, 6.0)), Color("3a3630"))
-	draw_rect(Rect2(c + Vector2(5.0, -8.0), Vector2(10.0, 6.0)), Color("3a3630"))
-	draw_rect(Rect2(c + Vector2(-2.0, 2.0), Vector2(4.0, 10.0)), Color("8a8272"))
-	draw_line(c + Vector2(-11.0, 18.0), c + Vector2(11.0, 18.0), Color("3a3630"), 2.0)
+	draw_rect(Rect2(c + Vector2(-21.0 * s, -11.0 * s), Vector2(14.0 * s, 8.0 * s)), Color("3a3630"))
+	draw_rect(Rect2(c + Vector2(7.0 * s, -11.0 * s), Vector2(14.0 * s, 8.0 * s)), Color("3a3630"))
+	draw_rect(Rect2(c + Vector2(-3.0 * s, 3.0 * s), Vector2(6.0 * s, 14.0 * s)), Color("8a8272"))
+	draw_line(c + Vector2(-15.0 * s, 25.0 * s), c + Vector2(15.0 * s, 25.0 * s), Color("3a3630"), 3.0 * s)
 
 
 func _draw_gates() -> void:
@@ -1168,31 +1224,31 @@ func _draw_gates() -> void:
 		_draw_torii_gate(r.get_center(), String(g["direction"]))
 	## 待出发时大门发光
 	if Flow.pending_mission != "":
-		draw_arc(GATE_POS + Vector2(0.0, -30.0), 92.0, 0.0, TAU, 36,
-			Color(1.0, 0.9, 0.5, 0.32 + 0.18 * sin(Time.get_ticks_msec() * 0.005)), 3.0)
+		draw_arc(GATE_POS + Vector2(0.0, -40.0), 130.0, 0.0, TAU, 36,
+			Color(1.0, 0.9, 0.5, 0.32 + 0.18 * sin(Time.get_ticks_msec() * 0.005)), 4.0)
 
 
 func _draw_torii_gate(c: Vector2, direction: String) -> void:
 	var horizontal := direction != "E" and direction != "W"
-	## 门柱
+	## 门柱（随地图放大 1.6 倍）
 	if horizontal:
-		draw_rect(Rect2(c + Vector2(-52.0, -74.0), Vector2(18.0, 74.0)), Color("6a5238"))
-		draw_rect(Rect2(c + Vector2(34.0, -74.0), Vector2(18.0, 74.0)), Color("6a5238"))
-		draw_rect(Rect2(c + Vector2(-70.0, -96.0), Vector2(140.0, 20.0)), Color("8a6a42"))
-		draw_rect(Rect2(c + Vector2(-80.0, -114.0), Vector2(160.0, 16.0)), Color("5a4230"))
-		draw_rect(Rect2(c + Vector2(-26.0, -52.0), Vector2(52.0, 52.0)), Color(0.0, 0.0, 0.0, 0.25))
+		draw_rect(Rect2(c + Vector2(-84.0, -118.0), Vector2(28.0, 118.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(56.0, -118.0), Vector2(28.0, 118.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(-112.0, -154.0), Vector2(224.0, 32.0)), Color("8a6a42"))
+		draw_rect(Rect2(c + Vector2(-128.0, -182.0), Vector2(256.0, 26.0)), Color("5a4230"))
+		draw_rect(Rect2(c + Vector2(-42.0, -83.0), Vector2(84.0, 84.0)), Color(0.0, 0.0, 0.0, 0.25))
 	else:
-		draw_rect(Rect2(c + Vector2(-74.0, -52.0), Vector2(74.0, 18.0)), Color("6a5238"))
-		draw_rect(Rect2(c + Vector2(-74.0, 34.0), Vector2(74.0, 18.0)), Color("6a5238"))
-		draw_rect(Rect2(c + Vector2(-96.0, -70.0), Vector2(20.0, 140.0)), Color("8a6a42"))
+		draw_rect(Rect2(c + Vector2(-118.0, -84.0), Vector2(118.0, 28.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(-118.0, 56.0), Vector2(118.0, 28.0)), Color("6a5238"))
+		draw_rect(Rect2(c + Vector2(-154.0, -112.0), Vector2(32.0, 224.0)), Color("8a6a42"))
 
 
 func _draw_interact_markers() -> void:
 	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.004)
 	for p in [BOARD_POS, SHOP_POS, SHRINE_POS, TORII_POS]:
-		if player != null and player.global_position.distance_to(p) < 260.0:
-			draw_arc(p + Vector2(0.0, -14.0), 40.0, 0.0, TAU, 26,
-				Color(1.0, 0.9, 0.5, 0.18 + 0.22 * pulse), 2.0)
+		if player != null and player.global_position.distance_to(p) < 380.0:
+			draw_arc(p + Vector2(0.0, -18.0), 56.0, 0.0, TAU, 26,
+				Color(1.0, 0.9, 0.5, 0.18 + 0.22 * pulse), 3.0)
 
 
 ## 建筑外观全部委托给 VillageArt（独立静态绘制模块）。

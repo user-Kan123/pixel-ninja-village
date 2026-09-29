@@ -1,21 +1,78 @@
 class_name VillageArt
 extends RefCounted
-## 村庄建筑的程序化像素插画。
+## 村庄建筑绘制：优先使用 AI 生成的星露谷风贴图（assets/buildings/*.png），
+## 没有贴图的样式（公园 / 训练场 / 森林 / 墓地等）回退到程序化像素绘制。
 ##
-## 和 PixelArt / Data.draw_jutsu_icon 一样是纯静态绘制模块：village.gd 只负责
-## "哪栋楼在哪、叫什么"，长什么样全在这里。
-##
-## 以后要换成真正的插画（AI 生成或手绘），只要把每个 _b_xxx 换成
-## c.draw_texture_rect(...) 即可，村庄逻辑一行都不用动。
+## 换图规则：把新 PNG 放进 assets/buildings/ 并命名为对应 style 名即可，
+## 代码不用改；删除某张 PNG 则该样式自动回退程序化绘制。
 
 
-## 当前绘制的建筑"变体号"：用来给屋顶/墙面做细微配色变化，
-## 这样一整排建筑不会长得一模一样（由 village.gd 按格子序号传入）。
+## 贴图缓存：style -> Texture2D（找不到的记 null，避免反复查盘）
+static var _tex_cache: Dictionary = {}
+## 当前绘制的建筑"变体号"：用来做细微色调变化，一排建筑不会一模一样
 static var _variant := 0
+
+
+## style -> 候选贴图名列表（按变体号轮换，一排建筑不会全是一个模子）
+## 没列出的样式没有贴图，走程序化绘制
+const TEXTURE_MAP := {
+	"hokage": ["hokage_office"],
+	"office": ["office"],
+	"residence": ["house2", "house3"],
+	"vault": ["vault"],
+	"hospital": ["hospital"],
+	"school": ["school"],
+	"tower": ["tower"],
+	"shop": ["shop", "shop2"],
+	"ramen": ["ramen"],
+	"tools": ["tools"],
+	"bath": ["bath"],
+	"theater": ["theater"],
+	"apartment": ["apartment"],
+	"clan": ["clan"],
+	"house": ["house", "house2", "house3"],
+	"house_block": ["house2", "house"],
+	"watch": ["watch"],
+}
+
+
+static func _tex(style: String, variant: int) -> Texture2D:
+	if not TEXTURE_MAP.has(style):
+		return null
+	var names: Array = TEXTURE_MAP[style]
+	var tex_name := String(names[variant % names.size()])
+	if not _tex_cache.has(tex_name):
+		var path := "res://assets/buildings/%s.png" % tex_name
+		_tex_cache[tex_name] = load(path) if ResourceLoader.exists(path) else null
+	return _tex_cache[tex_name]
 
 
 static func draw_building(c: CanvasItem, style: String, r: Rect2, label: String, variant := 0) -> void:
 	_variant = variant
+	var t := _tex(style, variant)
+	if t != null:
+		_draw_textured(c, t, r)
+	else:
+		_draw_procedural(c, style, r)
+	if not label.is_empty():
+		draw_sign(c, r, label)
+
+
+## 贴图绘制：底边对齐建筑格底边，宽度撑满格宽，等比缩放，变体微调色
+static func _draw_textured(c: CanvasItem, t: Texture2D, r: Rect2) -> void:
+	var w := r.size.x * 1.04
+	var h := w * t.get_height() / t.get_width()
+	var mod := Color(1.0, 1.0, 1.0)
+	match _variant % 4:
+		2:
+			mod = Color(0.93, 0.93, 0.97)
+		3:
+			mod = Color(1.0, 0.95, 0.88)
+	c.draw_texture_rect(t, Rect2(r.get_center().x - w * 0.5, r.end.y - h, w, h), false, mod)
+
+
+## 程序化兜底绘制（原实现）
+static func _draw_procedural(c: CanvasItem, style: String, r: Rect2) -> void:
 	match style:
 		"hokage": _b_hokage(c, r)
 		"hokage_rock": pass
@@ -43,8 +100,6 @@ static func draw_building(c: CanvasItem, style: String, r: Rect2, label: String,
 		"tent": _b_tent(c, r)
 		_:
 			_b_house(c, r, Color("c0b0a0"), Color("6a5a52"))
-	if not label.is_empty():
-		draw_sign(c, r, label)
 
 
 ## 变体配色：0 = 原色，1 = 亮一档，2 = 暗一档，3 = 偏暖
@@ -85,12 +140,12 @@ static func _base(c: CanvasItem, r: Rect2, wall_col: Color, roof_col: Color, tri
 
 ## 建筑名招牌（画在屋顶上方）
 static func draw_sign(c: CanvasItem, r: Rect2, text: String) -> void:
-	var w := float(text.length()) * 15.0 + 18.0
-	var box := Rect2(r.get_center().x - w * 0.5, r.position.y - 28.0, w, 22.0)
+	var w := float(text.length()) * 22.0 + 26.0
+	var box := Rect2(r.get_center().x - w * 0.5, r.position.y - 40.0, w, 32.0)
 	c.draw_rect(box, Color(0.07, 0.06, 0.05, 0.8))
-	c.draw_rect(box, Color(0.85, 0.78, 0.55, 0.75), false, 1.0)
-	c.draw_string(Data.font(), Vector2(box.position.x + 9.0, box.position.y + 16.0), text,
-		HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f0e6c8"))
+	c.draw_rect(box, Color(0.85, 0.78, 0.55, 0.75), false, 1.5)
+	c.draw_string(Data.font(), Vector2(box.position.x + 13.0, box.position.y + 23.0), text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("f0e6c8"))
 
 
 static func _b_hokage(c: CanvasItem, r: Rect2) -> void:
@@ -137,13 +192,16 @@ static func _b_hospital(c: CanvasItem, r: Rect2) -> void:
 
 
 static func _b_park(c: CanvasItem, r: Rect2) -> void:
-	c.draw_circle(r.get_center(), r.size.x * 0.5, Color("3f6b3c"))
-	c.draw_circle(r.get_center(), r.size.x * 0.5 - 8.0, Color("4a7a45"))
-	c.draw_circle(r.get_center() + Vector2(0.0, 26.0), 46.0, Color("3f7fa8"))
-	c.draw_circle(r.get_center() + Vector2(0.0, 26.0), 34.0, Color("6fb2d6"))
-	for d in [Vector2(-96.0, -70.0), Vector2(96.0, -70.0), Vector2(-110.0, 60.0), Vector2(110.0, 60.0)]:
-		_tree(c, r.get_center() + d, 22.0)
-	c.draw_rect(Rect2(r.get_center().x - 30.0, r.get_center().y - 44.0, 60.0, 8.0), Color("7a5a3c"))
+	## 半径取短边，公园严格画在自己的矩形里，不会盖住上下邻居
+	var rad := minf(r.size.x, r.size.y) * 0.5
+	c.draw_circle(r.get_center(), rad, Color("3f6b3c"))
+	c.draw_circle(r.get_center(), rad - 8.0, Color("4a7a45"))
+	c.draw_circle(r.get_center() + Vector2(0.0, 26.0), minf(46.0, rad * 0.4), Color("3f7fa8"))
+	c.draw_circle(r.get_center() + Vector2(0.0, 26.0), minf(34.0, rad * 0.3), Color("6fb2d6"))
+	var ts := rad * 0.18
+	for d in [Vector2(-0.42, -0.42), Vector2(0.42, -0.42), Vector2(-0.48, 0.36), Vector2(0.48, 0.36)]:
+		_tree(c, r.get_center() + Vector2(d.x * r.size.x, d.y * r.size.y), ts)
+	c.draw_rect(Rect2(r.get_center().x - 30.0, r.get_center().y - rad + 8.0, 60.0, 8.0), Color("7a5a3c"))
 
 
 static func _tree(c: CanvasItem, pos: Vector2, s: float) -> void:
