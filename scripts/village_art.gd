@@ -33,7 +33,19 @@ const TEXTURE_MAP := {
 	"house": ["house", "house2", "house3"],
 	"house_block": ["house2", "house"],
 	"watch": ["watch"],
+	## 地形 / 自然物（由 tools/make_nature_sprites.py 生成）
+	"park": ["park"],
+	"training": ["training"],
+	"forest": ["forest"],
+	"cemetery": ["cemetery"],
+	"stone": ["stone"],
+	"wharf": ["wharf"],
+	"hokage_rock": ["hokage_rock"],
 }
+
+## 这些是"地形"：贴图要拉伸铺满整块地（公园 / 演习场 / 森林 / 陵园 / 码头 / 火影岩），
+## 而不是像建筑那样等比缩放 + 底边对齐
+const FILL_STYLES := ["park", "training", "forest", "cemetery", "wharf", "hokage_rock"]
 
 
 static func _tex(style: String, variant: int) -> Texture2D:
@@ -47,11 +59,19 @@ static func _tex(style: String, variant: int) -> Texture2D:
 	return _tex_cache[tex_name]
 
 
+## 给 village.gd 用的：直接按样式取贴图（火影岩不是"建筑"，走单独绘制路径）
+static func texture_for(style: String) -> Texture2D:
+	return _tex(style, 0)
+
+
 static func draw_building(c: CanvasItem, style: String, r: Rect2, label: String, variant := 0) -> void:
 	_variant = variant
 	var t := _tex(style, variant)
 	if t != null:
-		_draw_textured(c, t, r)
+		if FILL_STYLES.has(style):
+			c.draw_texture_rect(t, r, false)
+		else:
+			_draw_textured(c, t, r)
 	else:
 		_draw_procedural(c, style, r)
 	if not label.is_empty():

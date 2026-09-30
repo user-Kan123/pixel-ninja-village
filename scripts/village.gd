@@ -1123,6 +1123,11 @@ func _draw_tree(c: Vector2, s: float) -> void:
 func _draw_mountain() -> void:
 	var b := _building("hokage_rock")
 	var r: Rect2 = (b.get("rect", Rect2(2520, 250, 2160, 420)) as Rect2)
+	## 有贴图就用贴图（横向铺满整条崖壁）
+	var tex := VillageArt.texture_for("hokage_rock")
+	if tex != null:
+		draw_texture_rect(tex, r, false)
+		return
 	## 崖壁：几团深浅不一的岩体堆出起伏（按矩形比例摆位，地图多大都不走样）
 	for fx in [0.06, 0.22, 0.42, 0.62, 0.80, 0.94]:
 		for fy in [0.35, 0.75]:

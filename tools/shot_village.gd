@@ -30,10 +30,17 @@ func _ready() -> void:
 	cam.position_smoothing_enabled = false
 
 	## 1) 整村俯瞰
-	cam.zoom = Vector2(0.26, 0.26)
+	## 画布 7200×5200，要装进 1280×720 需要 zoom ≤ 0.138
+	cam.zoom = Vector2(0.138, 0.138)
 	p.global_position = village.center
 	await get_tree().create_timer(0.4).timeout
 	await _shot("village_overview.png")
+
+	## 1.5) 中景（约半个村子，看街区与建筑密度）
+	cam.zoom = Vector2(0.26, 0.26)
+	p.global_position = village.center
+	await get_tree().create_timer(0.3).timeout
+	await _shot("village_mid.png")
 
 	## 2) 火影区近景（岩 + 火影楼 + 公园A）
 	cam.zoom = Vector2(0.55, 0.55)
