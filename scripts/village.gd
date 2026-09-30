@@ -521,89 +521,12 @@ func _front_of(id: String, gap: float) -> Vector2:
 	return Vector2(r.get_center().x, r.end.y + gap)
 
 
-## 在填充区里按抖动网格摆民居，避开建筑 / 道路 / 河 / 墙
-func _fill_area(area: Dictionary) -> void:
-	var r: Array = area.get("rect", [0, 0, 0, 0])
-	var box := Rect2(float(r[0]), float(r[1]), float(r[2]), float(r[3]))
-	var count := int(area.get("count", 4))
-	var style := String(area.get("style", "house"))
-	if box.size.x <= 0.0 or box.size.y <= 0.0:
-		return
-	var cols := maxi(int(box.size.x / 130.0), 1)
-	var rows := maxi(int(box.size.y / 120.0), 1)
-	var placed := 0
-	for ry in rows:
-		for rx in cols:
-			if placed >= count:
-				break
-			var w := _rng.randf_range(78.0, 112.0)
-			var h := _rng.randf_range(66.0, 96.0)
-			var px := box.position.x + (float(rx) + 0.5) * box.size.x / float(cols) + _rng.randf_range(-18.0, 18.0)
-			var py := box.position.y + (float(ry) + 0.5) * box.size.y / float(rows) + _rng.randf_range(-16.0, 16.0)
-			var rect := Rect2(px - w * 0.5, py - h * 0.5, w, h)
-			if not _spot_free(rect):
-				continue
-			buildings.append({
-				"id": "filler_" + str(placed) + "_" + str(int(px)),
-				"name": "",
-				"rect": rect,
-				"style": style,
-				"solid": true,
-				"priority": "P2",
-			})
-			placed += 1
-
-
-func _spot_free(rect: Rect2) -> bool:
-	## 必须在墙内
-	var corners := [
-		rect.position, Vector2(rect.end.x, rect.position.y),
-		Vector2(rect.position.x, rect.end.y), rect.end,
-	]
-	for c in corners:
-		if not _inside_wall(c, 60.0):
-			return false
-	## 不压已有建筑
-	for b in buildings:
-		if (b["rect"] as Rect2).grow(14.0).intersects(rect):
-			return false
-	## 不压河
-	if _dist_to_river(rect.get_center()) < river_w * 0.5 + rect.size.length() * 0.5 + 26.0:
-		return false
-	## 不压主路
-	if _near_road(rect.get_center()):
-		return false
-	return true
-
-
 func _inside_wall(p: Vector2, margin := 0.0) -> bool:
 	var rx := maxf(wall.x - margin, 1.0)
 	var ry := maxf(wall.y - margin, 1.0)
 	var nx := (p.x - center.x) / rx
 	var ny := (p.y - center.y) / ry
 	return nx * nx + ny * ny <= 1.0
-
-
-## 三个环路的半径（椭圆归一化），加道路附近的判定
-const RING_RADII := [0.34, 0.60, 0.85]
-
-func _near_road(p: Vector2) -> bool:
-	var nx := (p.x - center.x) / wall.x
-	var ny := (p.y - center.y) / wall.y
-	var d := sqrt(nx * nx + ny * ny)
-	for rr in RING_RADII:
-		if absf(d - float(rr)) < 0.055:
-			return true
-	## 八条放射主路
-	var ang := rad_to_deg(atan2(p.x - center.x, -(p.y - center.y)))
-	if ang < 0.0:
-		ang += 360.0
-	var step := fmod(ang, 45.0)
-	if step < 5.0 or step > 40.0:
-		return true
-	return false
-
-
 func _dist_to_river(p: Vector2) -> float:
 	var best := 99999.0
 	for i in range(river_pts.size() - 1):
