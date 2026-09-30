@@ -5,8 +5,9 @@
     "type": "consumable",
     "price": 20,
     "stack": 16,
-    "heal": 25,
-    "chakra": 25
+    "heal": 0,
+    "chakra": 25,
+    "stamina": 30
   },
   "heal_pill": {
     "name_key": "item.heal_pill",
@@ -25,5 +26,35 @@
     "stack": 16,
     "heal": 0,
     "chakra": 35
+  },
+  "ramen": {
+    "name_key": "item.ramen",
+    "desc_key": "item.ramen.desc",
+    "type": "consumable",
+    "price": 35,
+    "stack": 8,
+    "heal": 0,
+    "chakra": 15,
+    "stamina": 40
+  },
+  "dango": {
+    "name_key": "item.dango",
+    "desc_key": "item.dango.desc",
+    "type": "consumable",
+    "price": 18,
+    "stack": 12,
+    "heal": 0,
+    "chakra": 0,
+    "stamina": 25
+  },
+  "onigiri": {
+    "name_key": "item.onigiri",
+    "desc_key": "item.onigiri.desc",
+    "type": "consumable",
+    "price": 10,
+    "stack": 12,
+    "heal": 0,
+    "chakra": 0,
+    "stamina": 15
   }
 }

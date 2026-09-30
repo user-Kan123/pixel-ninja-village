@@ -17,9 +17,20 @@ enum State { MOVE, ATTACK, SEALING, AIM, CHARGE, GROUND, CHANNEL, DEAD }
 
 const MAX_HP_BASE := 100.0
 const MAX_CHAKRA_BASE := 100.0
+const MAX_STAMINA_BASE := 100.0
 ## 移动速度：已按手感反馈降到原值的 60%（330 → 198）。想整体调快/调慢只改这一个数。
 const MOVE_SPEED := 140.0
 const CHAKRA_REGEN := 9.0
+## ---------------- 体力系统 ----------------
+## 体力评价当前状态：充沛则移速/伤害/查克拉回复更高；见底则力竭（不能战斗）
+const STAMINA_REGEN_IDLE := 8.0      ## 站着不动的体力回复/秒
+const STAMINA_REGEN_EXHAUST := 12.0  ## 力竭时的体力回复/秒（降低难度）
+const STAMINA_MOVE_DRAIN := 1.2      ## 普通移动消耗/秒
+const STAMINA_MELEE_COST := 9.0      ## 近战每挥一击（消耗最高的动作）
+const STAMINA_MELEE_HEAVY := 16.0    ## 第三段重击
+const STAMINA_THROW_COST := 4.0      ## 远程投掷
+const STAMINA_JUTSU_RATIO := 0.5     ## 忍术体力消耗 = 查克拉消耗 × 该比例
+const EXHAUST_RECOVER := 25.0        ## 力竭后体力恢复到该值自动解除（滞回，防反复横跳）
 ## 武器槽：主手 + 副手，Q 切换。空字符串 = 该槽没装忍具。
 const WEAPON_SLOT_COUNT := 2
 ## 近战每命中一次扣的耐久
@@ -61,8 +72,12 @@ const MELEE_ARC := deg_to_rad(70.0)
 var game
 var max_hp := MAX_HP_BASE
 var max_chakra := MAX_CHAKRA_BASE
+var max_stamina := MAX_STAMINA_BASE
 var hp := MAX_HP_BASE
 var chakra := MAX_CHAKRA_BASE
+var stamina := MAX_STAMINA_BASE
+## 力竭：体力见底触发，禁止攻击/忍术/投掷、只能慢走，恢复到 EXHAUST_RECOVER 解除
+var exhausted := false
 
 ## 武器槽（主手 / 副手）：存的是**背包格编号 sid**（-1 = 空槽）。
 ## 指向格子而不是武器 id，才能区分"背包里三把短刀中正在用的那一把"。
@@ -350,7 +365,7 @@ func use_best_consumable() -> bool:
 	return false
 
 
-## 使用某一格道具：回体力 / 回查克拉，然后扣掉一个
+## 使用某一格道具：回血 / 回查克拉 / 回体力，然后扣掉一个
 func use_item(sid: int) -> bool:
 	var st := Flow.inv_find(sid)
 	if st.is_empty():
@@ -361,18 +376,25 @@ func use_item(sid: int) -> bool:
 		return false
 	var heal := float(d.get("heal", 0.0))
 	var chakra_gain := float(d.get("chakra", 0.0))
-	## 满血满蓝就不浪费道具
-	if hp >= max_hp and chakra >= max_chakra:
+	var stamina_gain := float(d.get("stamina", 0.0))
+	## 三项全满就不浪费道具
+	if hp >= max_hp and chakra >= max_chakra and stamina >= max_stamina:
 		_weapon_hint("hud.item_full")
 		return false
 	hp = minf(hp + heal, max_hp)
 	chakra = minf(chakra + chakra_gain, max_chakra)
+	stamina = minf(stamina + stamina_gain, max_stamina)
+	## 吃到体力即脱离力竭
+	if stamina > 0.0 and exhausted and stamina >= EXHAUST_RECOVER:
+		exhausted = false
 	Flow.inv_take(sid, 1)
 	var parts: Array = []
 	if heal > 0.0:
 		parts.append("%s +%d" % [Data.s("item.stat.heal"), int(heal)])
 	if chakra_gain > 0.0:
 		parts.append("%s +%d" % [Data.s("item.stat.chakra"), int(chakra_gain)])
+	if stamina_gain > 0.0:
+		parts.append("%s +%d" % [Data.s("item.stat.stamina"), int(stamina_gain)])
 	notify_weapon("%s · %s" % [Data.s("hud.used_item") % Data.item_name(id), " ".join(PackedStringArray(parts))])
 	Fx.burst(game.fx_container, global_position, Color(0.6, 0.95, 0.65, 0.85), 8, 140.0)
 	return true
@@ -415,8 +437,10 @@ func _level_up() -> void:
 	level += 1
 	max_hp += 12.0
 	max_chakra += 10.0
+	max_stamina += 10.0
 	hp = minf(max_hp, hp + max_hp * 0.35)
 	chakra = max_chakra
+	stamina = max_stamina
 	xp_next = 40 + (level - 1) * 26
 	flash_timer = 0.25
 	Fx.burst(game.fx_container, global_position, Color(1.0, 0.95, 0.5, 0.95), 14, 220.0)
@@ -570,6 +594,53 @@ func _update_face() -> void:
 		face_dir = to_mouse.normalized()
 
 
+# ---------------------------------------------------------------- 体力
+
+func stamina_ratio() -> float:
+	return stamina / maxf(max_stamina, 1.0)
+
+
+## 体力充沛移速更快（0.9~1.1 倍），力竭只能慢走（0.45 倍）
+func stamina_move_mult() -> float:
+	if exhausted:
+		return 0.45
+	return 0.9 + 0.2 * stamina_ratio()
+
+
+## 体力充沛攻击/忍术伤害更高（0.8~1.1 倍）
+func stamina_damage_mult() -> float:
+	return 0.8 + 0.3 * stamina_ratio()
+
+
+## 体力充沛查克拉回复更快（0.6~1.4 倍）
+func stamina_chakra_regen_mult() -> float:
+	return 0.6 + 0.8 * stamina_ratio()
+
+
+func _spend_stamina(amount: float) -> void:
+	if amount <= 0.0 or exhausted:
+		return
+	stamina = maxf(stamina - amount, 0.0)
+	if stamina <= 0.0:
+		exhausted = true
+		_weapon_hint("hud.exhausted")
+
+
+func _tick_stamina(delta: float, moving: bool, idle: bool) -> void:
+	if dead:
+		return
+	if exhausted:
+		stamina = minf(stamina + STAMINA_REGEN_EXHAUST * delta, max_stamina)
+		if stamina >= EXHAUST_RECOVER:
+			exhausted = false
+			notify_weapon(Data.s("hud.stamina_back"))
+	elif moving:
+		_spend_stamina(STAMINA_MOVE_DRAIN * delta)
+	elif idle:
+		stamina = minf(stamina + STAMINA_REGEN_IDLE * delta, max_stamina)
+	## 攻击/施法期间：不耗也不回（消耗已在动作发生时结算）
+
+
 # ---------------------------------------------------------------- 主循环
 
 func _physics_process(delta: float) -> void:
@@ -579,7 +650,7 @@ func _physics_process(delta: float) -> void:
 	for id in jutsu_cd:
 		jutsu_cd[id] = maxf(float(jutsu_cd[id]) - delta, 0.0)
 	if not dead:
-		var regen := CHAKRA_REGEN * _passive_mult("chakra_flow", "chakra_regen_mult", 1.0)
+		var regen := CHAKRA_REGEN * _passive_mult("chakra_flow", "chakra_regen_mult", 1.0) * stamina_chakra_regen_mult()
 		chakra = minf(chakra + regen * delta, max_chakra)
 	## 背包是唯一事实来源：槽里指着的格子没了就卸下
 	_verify_weapons()
@@ -596,21 +667,26 @@ func _physics_process(delta: float) -> void:
 
 	var desired := Vector2.ZERO
 	var orb_mult := float(orb_cfg.get("move_mult", 0.85)) if orb_active else 1.0
+	var spd_mult := stamina_move_mult()
 	match state:
 		State.MOVE:
-			desired = _move_input() * MOVE_SPEED * orb_mult
+			desired = _move_input() * MOVE_SPEED * orb_mult * spd_mult
 		State.ATTACK:
 			if attack_phase <= 1:
 				desired = attack_dir * float(attack_step.get("lunge", 0.0))
 			else:
-				desired = _move_input() * MOVE_SPEED * 0.45
+				desired = _move_input() * MOVE_SPEED * 0.45 * spd_mult
 		State.SEALING, State.AIM, State.CHARGE, State.GROUND, State.CHANNEL:
 			## 施法期间统一降到三成：鼠标追随时，瞄准远处目标不会被自己带着狂奔
-			desired = _move_input() * MOVE_SPEED * CAST_MOVE_MULT
+			desired = _move_input() * MOVE_SPEED * CAST_MOVE_MULT * spd_mult
 		State.DEAD:
 			pass
 	velocity = desired + knockback_velocity
 	move_and_slide()
+	## 体力：移动耗、站住回、力竭快回（攻击前冲不算普通移动）
+	_tick_stamina(delta,
+		state == State.MOVE and _move_input() != Vector2.ZERO,
+		state == State.MOVE and _move_input() == Vector2.ZERO)
 	_update_walk(delta)
 	_tick_orb(delta)
 
@@ -649,6 +725,9 @@ func _update_walk(delta: float) -> void:
 func _request_attack() -> void:
 	if orb_active:
 		## 手持丸子期间双手被占用，不能出刀
+		return
+	if exhausted:
+		_weapon_hint("hud.exhausted")
 		return
 	if not can_melee():
 		## 手上空着 → 提示去背包装；手里剑这类只能投掷的 → 提示改用右键
@@ -690,6 +769,7 @@ func _melee_step(stage: int) -> Dictionary:
 func _start_attack(stage: int) -> void:
 	attack_stage = stage
 	attack_step = _melee_step(stage)
+	_spend_stamina(STAMINA_MELEE_HEAVY if stage == 3 else STAMINA_MELEE_COST)
 	var dir := mouse_world - global_position
 	attack_dir = dir.normalized() if dir.length() > 1.0 else Vector2.RIGHT
 	attack_phase = 0
@@ -734,7 +814,7 @@ func _do_melee_hit() -> void:
 			continue
 		if to_e.length() > 26.0 and absf(attack_dir.angle_to(to_e)) > arc:
 			continue
-		var dmg: float = (float(attack_step.damage) + (buff_damage if buffed else 0.0) * w_mult) * _passive_mult("monstrous_strength", "melee_damage_mult", 1.0)
+		var dmg: float = (float(attack_step.damage) + (buff_damage if buffed else 0.0) * w_mult) * _passive_mult("monstrous_strength", "melee_damage_mult", 1.0) * stamina_damage_mult()
 		enemy.take_damage(dmg, attack_dir * float(attack_step.knockback))
 		if buffed and buff_paralysis > 0.0:
 			enemy.apply_root(buff_paralysis)
@@ -752,6 +832,9 @@ func _do_melee_hit() -> void:
 func _throw_weapon(target: Vector2) -> void:
 	if orb_active:
 		return
+	if exhausted:
+		_weapon_hint("hud.exhausted")
+		return
 	var slot := active_weapon
 	var sid := weapon_sid_at(slot)
 	if sid < 0:
@@ -766,6 +849,7 @@ func _throw_weapon(target: Vector2) -> void:
 		_weapon_hint_text(Data.s("hud.no_ammo") % Data.item_name(id))
 		return
 	Flow.inv_take(sid, 1)
+	_spend_stamina(STAMINA_THROW_COST)
 	var dir := (target - global_position).normalized()
 	if dir == Vector2.ZERO:
 		dir = Vector2.RIGHT
@@ -773,7 +857,7 @@ func _throw_weapon(target: Vector2) -> void:
 	Projectile.create(game.projectile_container, global_position + dir * 20.0, dir, {
 		"kind": id,
 		"speed": float(w.get("throw_speed", 640.0)),
-		"damage": float(w.get("throw_damage", 8.0)),
+		"damage": float(w.get("throw_damage", 8.0)) * stamina_damage_mult(),
 		"knockback": float(w.get("throw_knockback", 150.0)),
 		"lifetime": float(w.get("throw_lifetime", 1.1)),
 		"hit_radius": 5.0 if is_shuriken else 6.0,
@@ -793,6 +877,9 @@ func _try_cast_jutsu(id: String, slot_idx: int) -> void:
 	if dead:
 		return
 	if state != State.MOVE:
+		return
+	if exhausted:
+		_weapon_hint("hud.exhausted")
 		return
 	var cfg: Dictionary = Data.jutsu.get(id, {})
 	if cfg.is_empty():
@@ -829,6 +916,7 @@ func _try_cast_jutsu(id: String, slot_idx: int) -> void:
 
 func _cast_instant(id: String, cfg: Dictionary, cost: float) -> void:
 	chakra -= cost
+	_spend_stamina(cost * STAMINA_JUTSU_RATIO)
 	jutsu_cd[id] = float(cfg.get("cooldown", 1.0))
 	match String(cfg.get("category", "")):
 		"movement":
@@ -891,6 +979,7 @@ func _cast_body_trigger(id: String, cfg: Dictionary, cost: float) -> void:
 	if orb_active:
 		return
 	chakra -= cost
+	_spend_stamina(cost * STAMINA_JUTSU_RATIO)
 	jutsu_cd[id] = float(cfg.get("cooldown", 8.0))
 	orb_active = true
 	orb_timer = float(cfg.get("orb_duration", 4.0))
@@ -959,6 +1048,7 @@ func _passive_mult(id: String, key: String, fallback: float) -> float:
 
 func _start_seal(id: String, cfg: Dictionary, cost: float, slot_idx: int) -> void:
 	chakra -= cost
+	_spend_stamina(cost * STAMINA_JUTSU_RATIO)
 	jutsu_cd[id] = float(cfg.get("cooldown", 3.0))
 	seal_id = id
 	seal_cfg = cfg.duplicate()
@@ -1011,7 +1101,7 @@ func _spawn_fireball(cfg: Dictionary, scale: float, charge_ratio: float, aim: Ve
 	Projectile.create(game.projectile_container, global_position + dir * 24.0, dir, {
 		"kind": "fireball",
 		"speed": float(cfg.get("speed", 400.0)),
-		"damage": lerpf(float(cfg.get("damage", 12.0)), float(cfg.get("damage_max", cfg.get("damage", 12.0))), charge_ratio) * scale,
+		"damage": lerpf(float(cfg.get("damage", 12.0)), float(cfg.get("damage_max", cfg.get("damage", 12.0))), charge_ratio) * scale * stamina_damage_mult(),
 		"knockback": float(cfg.get("knockback", 220.0)),
 		"lifetime": 2.3,
 		"hit_radius": hit_r,
@@ -1053,6 +1143,7 @@ func _release_charge() -> void:
 		return
 	var cost := float(cfg.get("chakra_cost", 0.0))
 	chakra -= cost
+	_spend_stamina(cost * STAMINA_JUTSU_RATIO)
 	jutsu_cd[charge_id] = float(cfg.get("cooldown", 5.0))
 	var cat := String(cfg.get("category", ""))
 	if cat == "movement":
@@ -1140,6 +1231,7 @@ func _confirm_ground(_target: Vector2) -> void:
 		_cancel_ground()
 		return
 	chakra -= cost
+	_spend_stamina(cost * STAMINA_JUTSU_RATIO)
 	jutsu_cd[ground_id] = float(cfg.get("cooldown", 8.0))
 	var point := _ground_point()
 	var cat := String(cfg.get("category", ""))
@@ -1178,6 +1270,12 @@ func _tick_channel(delta: float) -> void:
 	channel_t += delta
 	hp = minf(hp + float(channel_cfg.get("heal_per_second", 0.0)) * delta, max_hp)
 	chakra = maxf(chakra - float(channel_cfg.get("chakra_per_second", 0.0)) * delta, 0.0)
+	## 引导类忍术同样耗体力（按查克拉流速比例），但医疗类引导同时缓慢恢复体力
+	var st_flow := float(channel_cfg.get("chakra_per_second", 0.0)) * STAMINA_JUTSU_RATIO
+	if float(channel_cfg.get("heal_per_second", 0.0)) > 0.0:
+		stamina = minf(stamina + 6.0 * delta, max_stamina)
+	else:
+		_spend_stamina(st_flow * delta)
 	if fmod(channel_t, 0.12) < delta:
 		Fx.burst(game.fx_container, global_position + Vector2(randf_range(-10.0, 10.0), randf_range(-14.0, 6.0)), Color(0.45, 0.95, 0.6, 0.8), 2, 70.0)
 	if chakra <= 0.0 or channel_t >= float(channel_cfg.get("max_channel", 4.0)) or hp >= max_hp:

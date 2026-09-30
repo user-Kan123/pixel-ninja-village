@@ -16,6 +16,8 @@ const BANNER_TIME := 3.2
 
 const COL_HP := Color("58c258")
 const COL_CHAKRA := Color("3f9fe0")
+const COL_STAMINA := Color("e8a33d")
+const COL_STAMINA_OUT := Color("c0453a")
 const COL_XP := Color("e0c447")
 const COL_TEXT := Color("f0ece3")
 const COL_DIM := Color("b8b2a4")
@@ -77,8 +79,15 @@ func _draw_bars(font: Font) -> void:
 	draw_rect(Rect2(x + 2.0, y2 + 2.0, (w - 4.0) * player.chakra / player.max_chakra, 6.0), COL_CHAKRA)
 	draw_rect(Rect2(x, y2, w, 10.0), Color(0.1, 0.1, 0.1, 0.9), false, 1.0)
 	draw_string(font, Vector2(x + w + 10.0, y2 + 9.0), "%d" % int(player.chakra), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COL_DIM)
+	## 体力条（查克拉条下方；力竭时变红）
+	var ys := y2 + 14.0
+	draw_rect(Rect2(x, ys, w, 10.0), Color(0, 0, 0, 0.55))
+	draw_rect(Rect2(x + 2.0, ys + 2.0, (w - 4.0) * player.stamina / player.max_stamina, 6.0),
+		COL_STAMINA_OUT if player.exhausted else COL_STAMINA)
+	draw_rect(Rect2(x, ys, w, 10.0), Color(0.1, 0.1, 0.1, 0.9), false, 1.0)
+	draw_string(font, Vector2(x + w + 10.0, ys + 9.0), "%d" % int(player.stamina), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, COL_DIM)
 	## 经验条
-	var y3 := y2 + 14.0
+	var y3 := ys + 14.0
 	draw_rect(Rect2(x, y3, w, 7.0), Color(0, 0, 0, 0.55))
 	var xp_ratio: float = clampf(float(player.xp) / maxf(float(player.xp_next), 1.0), 0.0, 1.0)
 	draw_rect(Rect2(x + 1.0, y3 + 1.0, (w - 2.0) * xp_ratio, 5.0), COL_XP)

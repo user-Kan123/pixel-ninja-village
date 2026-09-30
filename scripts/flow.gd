@@ -390,8 +390,11 @@ func apply_to_player(p) -> void:
 	p.xp_next = 40 + (level - 1) * 26
 	p.max_hp = p.MAX_HP_BASE + 12.0 * float(level - 1)
 	p.max_chakra = p.MAX_CHAKRA_BASE + 10.0 * float(level - 1)
+	p.max_stamina = p.MAX_STAMINA_BASE + 10.0 * float(level - 1)
 	p.hp = p.max_hp
 	p.chakra = p.max_chakra
+	p.stamina = p.max_stamina
+	p.exhausted = false
 	p.jutsu_slots.clear()
 	for id in loadout:
 		p.jutsu_slots.append(String(id))

@@ -141,6 +141,11 @@ func shop_list() -> Array:
 	return out
 
 
+## 食物店货架：拉面 / 丸子 / 饭团（一乐拉面与甘栗甘共用）
+func food_shop_list() -> Array:
+	return ["ramen", "dango", "onigiri"]
+
+
 ## 背包 / 商店共用的图标：武器走武器图标，消耗品画成一颗丸子
 static func draw_item_icon(c: CanvasItem, id: String, center: Vector2, r: float) -> void:
 	if Data.weapons.has(id):

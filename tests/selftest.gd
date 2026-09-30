@@ -59,6 +59,7 @@ func _ready() -> void:
 	await _test_rasengan()
 	await _test_passives()
 	await _test_pickup()
+	await _test_stamina()
 	await _test_wall_gnaw()
 	await _test_clone_combat()
 	await _test_enemy_attacks()
@@ -91,6 +92,8 @@ func _test_jutsu_pipeline() -> void:
 		player.orb_active = false
 		player.hp = player.max_hp
 		player.chakra = 9999.0
+		player.stamina = player.max_stamina
+		player.exhausted = false
 		player.jutsu_cd[id] = 0.0
 		var before: float = player.chakra
 		player._try_cast_jutsu(id, 0)
@@ -133,6 +136,8 @@ func _test_effects() -> void:
 	await _frames(3)
 	player.state = Player.State.MOVE
 	player.chakra = 9999.0
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player.jutsu_cd["binding_seal"] = 0.0
 	player.mouse_world = dummy.global_position
 	player._try_cast_jutsu("binding_seal", 0)
@@ -144,6 +149,8 @@ func _test_effects() -> void:
 
 	player.state = Player.State.MOVE
 	player.chakra = 9999.0
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player.jutsu_cd["fox_genjutsu"] = 0.0
 	player._try_cast_jutsu("fox_genjutsu", 0)
 	await _frames(3)
@@ -152,6 +159,8 @@ func _test_effects() -> void:
 	var hp_before: float = dummy.hp
 	player.state = Player.State.MOVE
 	player.chakra = 9999.0
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player.jutsu_cd["fireball"] = 0.0
 	player._try_cast_jutsu("fireball", 0)
 	await _frames(40)
@@ -161,6 +170,8 @@ func _test_effects() -> void:
 
 	player.state = Player.State.MOVE
 	player.chakra = 9999.0
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player.jutsu_cd["lightning_edge"] = 0.0
 	player._try_cast_jutsu("lightning_edge", 0)
 	await _frames(3)
@@ -181,6 +192,8 @@ func _test_effects() -> void:
 func _test_rasengan() -> void:
 	player.state = Player.State.MOVE
 	player.chakra = 9999.0
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player.jutsu_cd["rasengan"] = 0.0
 	player._try_cast_jutsu("rasengan", 0)
 	await _frames(3)
@@ -269,6 +282,46 @@ func _test_pickup() -> void:
 	_check(player.use_item(sid), "背包里的药没能吃下去")
 	_check(player.hp > hp_before, "吃药没有回血")
 	_check(Flow.inv_total("heal_pill") == bag_before, "吃药没有扣掉一个")
+
+
+## 体力系统：近战耗体力 → 力竭禁止战斗 → 站立恢复自动解除
+func _test_stamina() -> void:
+	player.dead = false
+	player.exhausted = false
+	player.stamina = 30.0
+	player.state = Player.State.MOVE
+	_reset_bag()
+	Flow.inv_add("tanto", 1)
+	player.equip_sid(0, Flow.first_sid_of("tanto"))
+	## 近战挥击扣体力
+	var st0: float = player.stamina
+	player._request_attack()
+	_check(player.state == Player.State.ATTACK, "体力充足时近战没打出去")
+	_check(player.stamina < st0, "近战没有消耗体力：%.0f → %.0f" % [st0, player.stamina])
+	await _frames(6)
+	## 连打到力竭
+	for i in 30:
+		if player.exhausted:
+			break
+		player.state = Player.State.MOVE
+		player._request_attack()
+		await _frames(4)
+	_check(player.exhausted, "连打没有触发力竭：体力 %.0f" % player.stamina)
+	## 力竭：禁止近战与忍术，移速打折
+	player.state = Player.State.MOVE
+	player._request_attack()
+	_check(player.state == Player.State.MOVE, "力竭时还能近战")
+	player._try_cast_jutsu("fireball", 0)
+	_check(player.state == Player.State.MOVE, "力竭时还能放忍术")
+	_check(player.stamina_move_mult() < 0.5, "力竭时移速未受限：%.2f" % player.stamina_move_mult())
+	## 站立快速恢复，过阈值自动解除
+	player.stamina = Player.EXHAUST_RECOVER - 1.0
+	await _frames(6)
+	_check(not player.exhausted, "力竭恢复后未解除")
+	## 体力充沛时增益生效
+	player.stamina = player.max_stamina
+	_check(player.stamina_damage_mult() > 1.05, "满体力伤害增益缺失：%.2f" % player.stamina_damage_mult())
+	_check(player.stamina_move_mult() > 1.05, "满体力移速增益缺失：%.2f" % player.stamina_move_mult())
 
 
 ## 墙体：敌人贴墙啃咬会造成耐久损耗
@@ -365,6 +418,8 @@ func _test_test_mode() -> void:
 	for i in 5:
 		_abort_cast()
 		player.chakra = 9999.0
+		player.stamina = player.max_stamina
+		player.exhausted = false
 		player.jutsu_cd[probes[i]] = 0.0
 		player._on_slot_pressed(i)
 		await _frames(2)
@@ -376,6 +431,8 @@ func _test_test_mode() -> void:
 	player.level = 1
 	_check(player.slots_unlocked() == 3, "关闭测试模式后 1 级应为 3 个槽：%d" % player.slots_unlocked())
 	player.chakra = 9999.0
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player.jutsu_cd["medical_palm"] = 0.0
 	player._on_slot_pressed(4)
 	await _frames(2)
@@ -452,11 +509,13 @@ func _test_weapons() -> void:
 	_check(player.weapon_count(0) == 16, "武器槽没读到背包数量：%d" % player.weapon_count(0))
 	player.state = Player.State.MOVE
 	var kunai_before := Flow.inv_total("kunai")
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player._throw_weapon(player.global_position + Vector2(200.0, 0.0))
 	var proj = _last_projectile()
 	_check(proj != null and String(proj.kind) == "kunai", "投出的不是苦无")
 	if proj != null:
-		_check(is_equal_approx(float(proj.damage), float(Data.weapon("kunai")["throw_damage"])),
+		_check(is_equal_approx(float(proj.damage), float(Data.weapon("kunai")["throw_damage"]) * player.stamina_damage_mult()),
 			"苦无投掷伤害不符：%s" % str(proj.damage))
 		proj.queue_free()
 	_check(Flow.inv_total("kunai") == kunai_before - 1,
@@ -477,6 +536,8 @@ func _test_weapons() -> void:
 	player.equip_sid(1, Flow.first_sid_of("tanto"))
 	player.active_weapon = 0
 	player.state = Player.State.MOVE
+	player.stamina = player.max_stamina
+	player.exhausted = false
 	player._throw_weapon(player.global_position + Vector2(200.0, 0.0))
 	await _frames(3)
 	_check(Flow.inv_total("shuriken") == 0, "手里剑没扣完：%d" % Flow.inv_total("shuriken"))
@@ -586,21 +647,25 @@ func _test_weapons() -> void:
 	player.equip_sid(0, 99999)
 	_check(player.weapon_sid_at(1) == ksid2, "装不存在的背包格却改动了别的槽")
 
-	## 兵粮丸：F 吃一颗，回血回蓝，数量 -1
+	## 兵粮丸：F 吃一颗，回体力回蓝不回血，数量 -1
 	_reset_bag()
 	Flow.inv_add("hyorogan", 2)
 	player.hp = 40.0
 	player.chakra = 30.0
+	player.stamina = 20.0
 	var hp0: float = player.hp
 	var ck0: float = player.chakra
+	var st0: float = player.stamina
 	_push_key(KEY_F)
 	await _frames(2)
 	_check(Flow.inv_total("hyorogan") == 1, "F 没有消耗兵粮丸：%d" % Flow.inv_total("hyorogan"))
-	_check(player.hp > hp0, "兵粮丸没有回体力：%.0f → %.0f" % [hp0, player.hp])
+	_check(player.stamina > st0, "兵粮丸没有回体力：%.0f → %.0f" % [st0, player.stamina])
 	_check(player.chakra > ck0, "兵粮丸没有回查克拉：%.0f → %.0f" % [ck0, player.chakra])
-	## 满血满蓝时不浪费道具
+	_check(player.hp == hp0, "兵粮丸不应回血：%.0f → %.0f" % [hp0, player.hp])
+	## 满状态时不浪费道具
 	player.hp = player.max_hp
 	player.chakra = player.max_chakra
+	player.stamina = player.max_stamina
 	_check(not player.use_best_consumable(), "满状态还吃了道具")
 	_check(Flow.inv_total("hyorogan") == 1, "满状态吃道具被扣掉了")
 
@@ -893,14 +958,16 @@ func _test_ui_clicks() -> void:
 	_push_click(lu._bag_cell_rect(0).get_center())
 	await _frames(3)
 	_check(player.weapon_at(0) == "kunai", "点背包里的忍具没装到武器槽：%s" % player.weapon_at(0))
-	## 点道具 → 直接使用（第 2 格 = 兵粮丸）
+	## 点道具 → 直接使用（第 2 格 = 兵粮丸，回体力回血查克拉但不回血）
 	player.hp = 50.0
 	player.chakra = 50.0
+	player.stamina = 20.0
+	var st0: float = player.stamina
 	var pills: int = Flow.inv_total("hyorogan")
 	_push_click(lu._bag_cell_rect(2).get_center())
 	await _frames(3)
 	_check(Flow.inv_total("hyorogan") == pills - 1, "点背包里的道具没有消耗：%d" % Flow.inv_total("hyorogan"))
-	_check(player.hp > 50.0, "点道具没有生效")
+	_check(player.stamina > st0, "点兵粮丸没有回体力：%.0f → %.0f" % [st0, player.stamina])
 	## 点武器槽可切换选中
 	_push_click(lu._weapon_slot_rect(1).get_center())
 	await _frames(2)

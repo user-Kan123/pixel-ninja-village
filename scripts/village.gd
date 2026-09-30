@@ -38,6 +38,8 @@ var _block_styles: Dictionary = {}
 ## 交互点（_ready 里从建筑数据推导，不写死坐标）
 var BOARD_POS := Vector2.ZERO
 var SHOP_POS := Vector2.ZERO
+var FOOD_SHOP_POS := Vector2.ZERO
+var DANGO_POS := Vector2.ZERO
 var SHRINE_POS := Vector2.ZERO
 var TORII_POS := Vector2.ZERO
 var GATE_POS := Vector2.ZERO
@@ -144,6 +146,8 @@ func _parse_layout() -> void:
 	## 交互点：由建筑推导，改布局不用改代码
 	BOARD_POS = _front_of("mission_desk", 60.0)
 	SHOP_POS = _front_of("tool_shop", 60.0)
+	FOOD_SHOP_POS = _front_of("ichiraku", 60.0)
+	DANGO_POS = _front_of("dango_shop", 60.0)
 	SHRINE_POS = _front_of("player_apartment", 60.0)
 	TORII_POS = _front_of("training_a", 56.0)
 	var mg := _building("main_gate")
@@ -721,6 +725,8 @@ func _nearest_interactable() -> Dictionary:
 		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("building.training_a") + " · " + Data.s("village.enter")},
 		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("building.apartment") + " · " + Data.s("village.rest")},
 		{"pos": SHOP_POS, "kind": "shop", "hint": Data.s("village.shop") + " · " + Data.s("village.open_shop")},
+		{"pos": FOOD_SHOP_POS, "kind": "food_shop", "hint": Data.s("building.ramen") + " · " + Data.s("village.open_shop")},
+		{"pos": DANGO_POS, "kind": "food_shop", "hint": Data.s("building.dango_shop") + " · " + Data.s("village.open_shop")},
 	]
 	if Flow.pending_mission != "":
 		spots.append({"pos": GATE_POS, "kind": "depart", "hint": Data.s("village.depart")})
@@ -757,7 +763,9 @@ func on_interact() -> void:
 			Flow.save_game()
 			hud.show_notice(Data.s("village.saved"))
 		"shop":
-			toggle_shop()
+			toggle_shop("weapon")
+		"food_shop":
+			toggle_shop("food")
 		"depart":
 			Flow.sync_from_player(player)
 			Flow.depart_mission()
@@ -765,14 +773,15 @@ func on_interact() -> void:
 
 # ---------------------------------------------------------------- 忍具店
 
-func toggle_shop() -> void:
-	if shop_ui.visible:
+func toggle_shop(mode := "weapon") -> void:
+	if shop_ui.visible and shop_ui.mode == mode:
 		close_shop()
 		return
 	if loadout_open:
 		close_loadout()
 	if board_open():
 		close_board()
+	shop_ui.mode = mode
 	shop_ui.visible = true
 	shop_ui.on_opened()
 	get_tree().paused = true
@@ -1245,7 +1254,7 @@ func _draw_torii_gate(c: Vector2, direction: String) -> void:
 
 func _draw_interact_markers() -> void:
 	var pulse := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.004)
-	for p in [BOARD_POS, SHOP_POS, SHRINE_POS, TORII_POS]:
+	for p in [BOARD_POS, SHOP_POS, SHRINE_POS, TORII_POS, FOOD_SHOP_POS, DANGO_POS]:
 		if player != null and player.global_position.distance_to(p) < 380.0:
 			draw_arc(p + Vector2(0.0, -18.0), 56.0, 0.0, TAU, 26,
 				Color(1.0, 0.9, 0.5, 0.18 + 0.22 * pulse), 3.0)

@@ -6,6 +6,8 @@ extends Control
 ## 所以忍具（手里剑 / 苦无）是真的买几个用几个，短刀长剑可以重复买、每把各有耐久。
 
 var game
+## "weapon" = 忍具店货架（武器+消耗品）；"food" = 食物店货架（拉面/丸子/饭团）
+var mode := "weapon"
 
 const PANEL_W := 800.0
 const PANEL_H := 600.0
@@ -30,6 +32,10 @@ func on_opened() -> void:
 	hint_text = ""
 	hint_timer = 0.0
 	queue_redraw()
+
+
+func _items() -> Array:
+	return Data.food_shop_list() if mode == "food" else Data.shop_list()
 
 
 func show_hint(text: String) -> void:
@@ -60,7 +66,7 @@ func _gui_input(event: InputEvent) -> void:
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return
 	var p: Vector2 = event.position
-	var items := Data.shop_list()
+	var items := _items()
 	for i in items.size():
 		var id := String(items[i])
 		if _buy1_rect(i).has_point(p):
@@ -143,12 +149,12 @@ func _draw() -> void:
 	var p := _panel_rect()
 	draw_rect(p, Color("2a2620"))
 	draw_rect(p, Color(0.85, 0.72, 0.4), false, 2.0)
-	draw_string(font, p.position + Vector2(24.0, 44.0), Data.s("shop.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
+	draw_string(font, p.position + Vector2(24.0, 44.0), Data.s("shop.food_title") if mode == "food" else Data.s("shop.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Color("f0ece3"))
 	## 右对齐必须给 width（draw_string 只在 width > 0 时应用 alignment）
 	draw_string(font, Vector2(p.position.x, p.position.y + 44.0),
 		"%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("bag.usage") % [Flow.inv_used(), Flow.INV_SLOTS]],
 		HORIZONTAL_ALIGNMENT_RIGHT, PANEL_W - 24.0, 15, Color("e0c447"))
-	var items := Data.shop_list()
+	var items := _items()
 	for i in items.size():
 		_draw_row(font, i, String(items[i]))
 	var footer := hint_text if hint_timer > 0.0 else Data.s("shop.hint")
