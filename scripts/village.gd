@@ -651,10 +651,10 @@ func _nearest_interactable() -> Dictionary:
 	var spots := [
 		{"pos": BOARD_POS, "kind": "board", "hint": Data.s("building.mission_desk") + " · " + Data.s("village.open")},
 		{"pos": TORII_POS, "kind": "torii", "hint": Data.s("building.training_a") + " · " + Data.s("village.enter")},
-		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("building.apartment") + " · " + Data.s("village.rest")},
-		{"pos": SHOP_POS, "kind": "shop", "hint": Data.s("village.shop") + " · " + Data.s("village.open_shop")},
-		{"pos": FOOD_SHOP_POS, "kind": "food_shop", "hint": Data.s("building.ramen") + " · " + Data.s("village.open_shop")},
-		{"pos": DANGO_POS, "kind": "food_shop", "hint": Data.s("building.dango_shop") + " · " + Data.s("village.open_shop")},
+		{"pos": SHRINE_POS, "kind": "shrine", "hint": Data.s("building.apartment") + " · " + _sleep_hint()},
+		{"pos": SHOP_POS, "kind": "shop", "hint": Data.s("village.shop") + " · " + _shop_hint()},
+		{"pos": FOOD_SHOP_POS, "kind": "food_shop", "hint": Data.s("building.ramen") + " · " + _shop_hint()},
+		{"pos": DANGO_POS, "kind": "food_shop", "hint": Data.s("building.dango_shop") + " · " + _shop_hint()},
 	]
 	if Flow.pending_mission != "":
 		spots.append({"pos": GATE_POS, "kind": "depart", "hint": Data.s("village.depart")})
@@ -674,6 +674,16 @@ func current_interact_hint() -> String:
 	return String(_nearest_interactable().get("hint", ""))
 
 
+## 公寓的交互提示：今天睡过了就显示"睡不着"
+func _sleep_hint() -> String:
+	return Data.s("village.rest") if Flow.can_sleep() else Data.s("village.cant_sleep")
+
+
+## 店铺的交互提示：打烊时段显示"已打烊"
+func _shop_hint() -> String:
+	return Data.s("shop.closed") if Flow.is_shop_closed() else Data.s("village.open_shop")
+
+
 func on_interact() -> void:
 	if player == null or player.dead:
 		return
@@ -687,9 +697,7 @@ func on_interact() -> void:
 			Flow.sync_from_player(player)
 			Flow.start_training()
 		"shrine":
-			Flow.sync_from_player(player)
-			Flow.save_game()
-			hud.show_notice(Data.s("village.saved"))
+			sleep_here()
 		"shop":
 			toggle_shop("weapon")
 		"food_shop":
@@ -701,9 +709,29 @@ func on_interact() -> void:
 
 # ---------------------------------------------------------------- 忍具店
 
+## 睡觉：跳到次日 06:00、回满生命/查克拉/体力并存档。每个游戏日只能睡一次。
+## 一天只能睡一次，是为了防止玩家在公寓门口连点睡觉刷研究进度（见时间系统规格 §3）。
+func sleep_here() -> void:
+	if player == null or player.dead:
+		return
+	if not Flow.can_sleep():
+		hud.show_notice(Data.s("village.cant_sleep"))
+		return
+	Flow.sync_from_player(player)
+	Flow.sleep_until_morning()
+	player.hp = player.max_hp
+	player.chakra = player.max_chakra
+	player.stamina = player.max_stamina
+	player.exhausted = false
+	hud.show_notice(Data.s("village.slept") % Flow.day)
+
+
 func toggle_shop(mode := "weapon") -> void:
 	if shop_ui.visible and shop_ui.mode == mode:
 		close_shop()
+		return
+	if Flow.is_shop_closed():
+		hud.show_notice(Data.s("shop.closed"))
 		return
 	if loadout_open:
 		close_loadout()

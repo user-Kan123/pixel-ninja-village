@@ -24,6 +24,10 @@ var gate_pos: Vector2 = Vector2(920.0, 1140.0)
 
 enum MissionState { NONE, RUNNING, WON, LOST }
 
+## 夜晚的野外更危险：刷怪更密、精英更多（只变多，不变强）
+const NIGHT_SPAWN_INTERVAL_MULT := 0.7
+const NIGHT_ELITE_WEIGHT_MULT := 1.5
+
 var player: Player
 var hud: Hud
 var hud_layer: CanvasLayer
@@ -164,12 +168,12 @@ func _process(delta: float) -> void:
 		"hunt":
 			if _alive_enemies() < int(Flow.mission_cfg.get("alive_cap", 5)):
 				enemy_timer += delta
-				if enemy_timer >= 2.2:
+				if enemy_timer >= _spawn_interval():
 					enemy_timer = 0.0
 					_spawn_mission_enemy()
 		"collect":
 			enemy_timer += delta
-			if enemy_timer >= float(Flow.mission_cfg.get("enemy_interval", 11.0)):
+			if enemy_timer >= _spawn_interval():
 				enemy_timer = 0.0
 				if _alive_enemies() < int(Flow.mission_cfg.get("alive_cap", 4)):
 					_spawn_mission_enemy()
@@ -209,6 +213,22 @@ func _make_enemy(kind: String) -> EnemyBase:
 	return EnemyChaser.new()
 
 
+## 当前任务类型的刷怪间隔；夜晚 ×0.7（更密）
+func _spawn_interval() -> float:
+	var t := String(Flow.mission_cfg.get("type", ""))
+	var base := 2.2 if t == "hunt" else float(Flow.mission_cfg.get("enemy_interval", 11.0))
+	return base * (NIGHT_SPAWN_INTERVAL_MULT if Flow.is_night() else 1.0)
+
+
+## 夜晚精英权重更高；白天原样返回
+func _night_mix(mix: Dictionary) -> Dictionary:
+	if not Flow.is_night():
+		return mix
+	var out := mix.duplicate()
+	out["elite"] = float(out.get("elite", 0.0)) * NIGHT_ELITE_WEIGHT_MULT
+	return out
+
+
 func _pick_from_mix(mix: Dictionary) -> String:
 	var total := 0.0
 	for k in mix:
@@ -222,7 +242,7 @@ func _pick_from_mix(mix: Dictionary) -> String:
 
 
 func _spawn_mission_enemy() -> void:
-	var kind := _pick_from_mix(Flow.mission_cfg.get("mix", {}))
+	var kind := _pick_from_mix(_night_mix(Flow.mission_cfg.get("mix", {})))
 	var e := _make_enemy(kind)
 	e.game = self
 	e.position = resolve_static(_random_spawn_pos())

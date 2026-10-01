@@ -73,6 +73,7 @@ func _ready() -> void:
 	await _test_time()
 	await _test_night_fx()
 	await _test_mission_hunt()
+	await _test_night_spawn()
 	await _test_mission_collect()
 	await _test_mission_survive()
 	await _test_wild_and_pending()
@@ -80,7 +81,48 @@ func _ready() -> void:
 	await _test_ui_clicks()
 	await _test_shop()
 	await _test_time_scene()
+	await _test_time_gates()
 	_finish()
+
+
+## 夜晚的玩法后果：野外刷怪更密、精英权重更高（战场场景里跑）
+func _test_night_spawn() -> void:
+	Flow.hour = 12.0
+	var day_i: float = game._spawn_interval()
+	Flow.hour = 22.0
+	var night_i: float = game._spawn_interval()
+	_check(night_i < day_i, "夜间刷怪间隔应更短：%f vs %f" % [night_i, day_i])
+	var mix := {"chaser": 10.0, "elite": 1.0}
+	var night_mix: Dictionary = game._night_mix(mix)
+	_check(float(night_mix["elite"]) > float(mix["elite"]), "夜间精英权重应提高：%f" % float(night_mix["elite"]))
+	Flow.hour = 12.0
+	_check(is_equal_approx(float(game._night_mix(mix)["elite"]), 1.0), "白天不该改精英权重")
+
+
+## 时间闸门：20:00 打烊、公寓睡觉（村庄场景里跑）
+func _test_time_gates() -> void:
+	Flow.hour = 21.0
+	_check(Flow.is_shop_closed(), "21:00 应打烊")
+	Flow.hour = 12.0
+	_check(not Flow.is_shop_closed(), "中午不该打烊")
+	## 打烊时段真的打不开商店（这才是玩家能感觉到的行为）
+	Flow.hour = 21.0
+	game.toggle_shop("weapon")
+	_check(not game.shop_open(), "打烊时段不该能打开商店")
+	Flow.hour = 12.0
+	game.toggle_shop("weapon")
+	_check(game.shop_open(), "白天应该能打开商店")
+	game.close_shop()
+	## 睡觉：第一次成功、第二次被拒
+	Flow.hour = 12.0
+	Flow.slept_today = false
+	player.hp = 10.0
+	player.chakra = 5.0
+	game.sleep_here()
+	_check(is_equal_approx(Flow.hour, 6.0), "睡觉后应是 06:00：%f" % Flow.hour)
+	_check(player.hp >= player.max_hp, "睡觉应回满生命：%f" % player.hp)
+	_check(player.chakra >= player.max_chakra, "睡觉应回满查克拉：%f" % player.chakra)
+	_check(not Flow.can_sleep(), "同一天不该能睡第二次")
 
 
 # ---------------------------------------------------------------- 忍术管线
@@ -1291,6 +1333,9 @@ func _reset_flow() -> void:
 	Flow.xp = 0
 	Flow.money = 0
 	Flow.day = 1
+	## 时间也要复位，否则用例之间会互相污染（比如上一条把 hour 留在深夜）
+	Flow.hour = Flow.DAY_START_HOUR
+	Flow.slept_today = false
 	Flow.missions_done = {}
 	Flow.mission_id = ""
 	Flow.mission_cfg = {}
