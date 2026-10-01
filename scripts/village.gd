@@ -77,6 +77,11 @@ func _ready() -> void:
 	_spawn_ui()
 
 
+## 时间：村庄里也照常流逝（打开看板 / 背包 / 商店时游戏暂停，本函数自然不执行）
+func _process(delta: float) -> void:
+	Flow.advance(delta)
+
+
 # ---------------------------------------------------------------- 布局解析
 
 func _parse_layout() -> void:

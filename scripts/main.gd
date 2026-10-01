@@ -155,6 +155,8 @@ func _show_start_banner() -> void:
 
 
 func _process(delta: float) -> void:
+	## 时间在任何情况下都要走（结算画面之后也走），所以放在提前 return 之前
+	Flow.advance(delta)
 	if mission_state != MissionState.RUNNING:
 		return
 	var t := String(Flow.mission_cfg.get("type", ""))

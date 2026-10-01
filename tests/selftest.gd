@@ -77,6 +77,7 @@ func _ready() -> void:
 	await _test_death()
 	await _test_ui_clicks()
 	await _test_shop()
+	await _test_time_scene()
 	_finish()
 
 
@@ -735,6 +736,22 @@ func _test_flow_save() -> void:
 	_check(Flow.sid_of_slot(0) == tsid, "武器槽指向的背包格编号没存回来：%d vs %d" % [Flow.sid_of_slot(0), tsid])
 	_reset_flow()
 
+
+
+## 时间系统：场景里时间要自己往前走，界面打开时停
+func _test_time_scene() -> void:
+	_reset_flow()
+	Flow.hour = 6.0
+	var h0: float = Flow.hour
+	await _frames(30)
+	_check(Flow.hour > h0, "村庄里时间没有流逝：%f" % Flow.hour)
+	## 界面打开（pause）时时间必须停
+	game.toggle_board()
+	await _frames(2)
+	var h1: float = Flow.hour
+	await _frames(30)
+	_check(is_equal_approx(Flow.hour, h1), "看板打开时时间仍在走：%f → %f" % [h1, Flow.hour])
+	game.close_board()
 
 
 ## 时间系统：Flow 时钟核心
