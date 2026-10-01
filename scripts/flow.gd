@@ -26,11 +26,26 @@ const DEFAULT_KIT := [
 	{"id": "hyorogan", "count": 3},
 ]
 
+## ---------------------------------------------------------------- 时间
+## 一天 24 小时 = DAY_REAL_SECONDS + NIGHT_REAL_SECONDS = 10 分钟现实时间。
+## 06:00 是一天的起点，也是日界：跨过 06:00 就 day += 1。
+const HOURS_PER_DAY := 24.0
+const DAY_START_HOUR := 6.0
+const NIGHT_START_HOUR := 18.0
+const SHOP_CLOSE_HOUR := 20.0
+const DAY_REAL_SECONDS := 480.0     ## 06:00 → 18:00
+const NIGHT_REAL_SECONDS := 120.0   ## 18:00 → 次日 06:00
+const DAY_SPAN_HOURS := NIGHT_START_HOUR - DAY_START_HOUR       ## 12
+const NIGHT_SPAN_HOURS := HOURS_PER_DAY - DAY_SPAN_HOURS        ## 12
+
 ## 持久进度
 var level := 1
 var xp := 0
 var money := 0
 var day := 1
+## 当前时刻（0.0 ~ 24.0）与"今天是否已经睡过"
+var hour := DAY_START_HOUR
+var slept_today := false
 var loadout: Array[String] = []
 ## 背包格（每格 {sid, id, count, dur}）与自增编号
 var inventory: Array = []
@@ -77,6 +92,71 @@ func _ensure_weapon_slots() -> void:
 		weapon_sids.append(-1)
 
 
+# ---------------------------------------------------------------- 时间
+
+func is_night() -> bool:
+	return hour >= NIGHT_START_HOUR or hour < DAY_START_HOUR
+
+
+## 00:00 ~ 06:00：熬夜段（体力消耗加快，见 player.gd）
+func is_late_night() -> bool:
+	return hour < DAY_START_HOUR
+
+
+## 20:00 打烊，次日 06:00 开门
+func is_shop_closed() -> bool:
+	return hour >= SHOP_CLOSE_HOUR or hour < DAY_START_HOUR
+
+
+func can_sleep() -> bool:
+	return not slept_today
+
+
+func _hour_rate() -> float:
+	## 白天 12 小时摊在 480 秒上（0.025 小时/秒），夜晚 12 小时摊在 120 秒上（0.1 小时/秒）
+	return (NIGHT_SPAN_HOURS / NIGHT_REAL_SECONDS) if is_night() else (DAY_SPAN_HOURS / DAY_REAL_SECONDS)
+
+
+## 推进时间。支持一次传入很大的 delta（会按时段分段走完），
+## 每到 06:00 算过一天，并重置"今天睡过了"。
+func advance(delta: float) -> void:
+	var left := maxf(delta, 0.0)
+	var guard := 0
+	while left > 0.0 and guard < 256:
+		guard += 1
+		var night := is_night()
+		var rate := _hour_rate()
+		var boundary := DAY_START_HOUR if night else NIGHT_START_HOUR
+		var hours_to_boundary := fposmod(boundary - hour, HOURS_PER_DAY)
+		if hours_to_boundary <= 0.0001:
+			hours_to_boundary = HOURS_PER_DAY
+		var real_to_boundary := hours_to_boundary / rate
+		if left < real_to_boundary:
+			hour = fposmod(hour + left * rate, HOURS_PER_DAY)
+			left = 0.0
+		else:
+			hour = boundary
+			left -= real_to_boundary
+			if night:
+				## 夜晚走到 06:00 = 过了一天
+				day += 1
+				slept_today = false
+
+
+## 睡觉：跳到次日 06:00。调用方负责回满资源与提示。
+func sleep_until_morning() -> void:
+	day += 1
+	hour = DAY_START_HOUR
+	slept_today = true
+	save_game()
+
+
+func time_text() -> String:
+	var h := int(floor(hour))
+	var m := int(floor((hour - float(h)) * 60.0))
+	return "%s · %02d:%02d" % [Data.s("hud.day") % day, h, m]
+
+
 # ---------------------------------------------------------------- 场景与任务
 
 func in_mission() -> bool:
@@ -114,13 +194,13 @@ func back_to_village() -> void:
 	get_tree().change_scene_to_file("res://scenes/village.tscn")
 
 
-## 任务完成：发赏金、计次数、过一天、存盘。返回 {ryo, xp}。
+## 任务完成：发赏金、计次数、存盘。返回 {ryo, xp}。
+## 注意：**不再凭空 +1 天**——时间由时钟负责，任务只是花掉了真实流过的那段时间。
 func complete_mission() -> Dictionary:
 	var ryo := int(mission_cfg.get("reward_ryo", 0))
 	var r_xp := int(mission_cfg.get("reward_xp", 0))
 	money += ryo
 	missions_done[mission_id] = int(missions_done.get(mission_id, 0)) + 1
-	day += 1
 	save_game()
 	return {"ryo": ryo, "xp": r_xp}
 
@@ -414,6 +494,8 @@ func save_game() -> void:
 		"xp": xp,
 		"money": money,
 		"day": day,
+		"hour": hour,
+		"slept_today": slept_today,
 		"loadout": Array(loadout),
 		"inventory": inventory,
 		"inv_next_sid": inv_next_sid,
@@ -440,6 +522,9 @@ func load_save() -> bool:
 	xp = int(parsed.get("xp", 0))
 	money = int(parsed.get("money", 0))
 	day = int(parsed.get("day", 1))
+	## 老存档没有 hour：默认读成早上 06:00（不能变成 0，否则会被判成熬夜）
+	hour = float(parsed.get("hour", DAY_START_HOUR))
+	slept_today = bool(parsed.get("slept_today", false))
 	var lo: Array = parsed.get("loadout", [])
 	if lo.size() == 5:
 		loadout.clear()
@@ -513,6 +598,8 @@ func reset_save() -> void:
 	xp = 0
 	money = START_MONEY
 	day = 1
+	hour = DAY_START_HOUR
+	slept_today = false
 	loadout.clear()
 	for id in DEFAULT_LOADOUT:
 		loadout.append(String(id))

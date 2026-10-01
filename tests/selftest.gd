@@ -69,6 +69,7 @@ func _ready() -> void:
 	await _test_weapons()
 	_test_mouse_move()
 	_test_flow_save()
+	await _test_time()
 	await _test_mission_hunt()
 	await _test_mission_collect()
 	await _test_mission_survive()
@@ -735,6 +736,54 @@ func _test_flow_save() -> void:
 	_reset_flow()
 
 
+
+## 时间系统：Flow 时钟核心
+func _test_time() -> void:
+	Flow.day = 1
+	Flow.hour = 6.0
+	Flow.slept_today = false
+	Flow.advance(240.0)               ## 白天 0.025 小时/秒
+	_check(is_equal_approx(Flow.hour, 12.0), "白天推进不对：%f" % Flow.hour)
+	_check(not Flow.is_night(), "12:00 不该算夜晚")
+	Flow.advance(240.0)
+	_check(is_equal_approx(Flow.hour, 18.0), "到 18:00 不对：%f" % Flow.hour)
+	_check(Flow.is_night(), "18:00 应算夜晚")
+	Flow.advance(20.0)                ## 夜晚 0.1 小时/秒
+	_check(is_equal_approx(Flow.hour, 20.0), "夜晚流速不对：%f" % Flow.hour)
+	_check(Flow.is_shop_closed(), "20:00 应打烊")
+	## 跨日：从 22:00 走 8 小时（夜晚 80 秒）
+	Flow.hour = 22.0
+	var d0: int = Flow.day
+	Flow.advance(80.0)
+	_check(Flow.day == d0 + 1, "跨过 06:00 应 +1 天：%d" % Flow.day)
+	_check(is_equal_approx(Flow.hour, 6.0), "跨日后应停在 06:00：%f" % Flow.hour)
+	## 一次性传很大的 delta（跨"白天→夜晚→次日"三段），不能吞掉或重复计一天
+	Flow.hour = 6.0
+	var d_big: int = Flow.day
+	Flow.advance(600.0)              ## 480s 白天 + 120s 夜晚 = 正好一天
+	_check(Flow.day == d_big + 1, "跨整天应恰好 +1 天：%d" % Flow.day)
+	_check(is_equal_approx(Flow.hour, 6.0), "跨整天后应回到 06:00：%f" % Flow.hour)
+	## 睡觉
+	Flow.hour = 21.0
+	Flow.slept_today = false
+	var d1: int = Flow.day
+	_check(Flow.can_sleep(), "白天/夜里应能睡")
+	Flow.sleep_until_morning()
+	_check(is_equal_approx(Flow.hour, 6.0), "睡觉后应是 06:00：%f" % Flow.hour)
+	_check(Flow.day == d1 + 1, "睡觉应推进一天：%d" % Flow.day)
+	_check(not Flow.can_sleep(), "同一天不该能睡第二次")
+	## 老存档：只有 day，没有 hour / slept_today
+	var f := FileAccess.open(Flow.SAVE_PATH, FileAccess.WRITE)
+	f.store_string('{"day": 7, "level": 3}')
+	f.close()
+	Flow.hour = 2.0
+	Flow.slept_today = true
+	_check(Flow.load_save(), "老存档读取失败")
+	_check(is_equal_approx(Flow.hour, 6.0), "老存档应读成 06:00：%f" % Flow.hour)
+	_check(Flow.day == 7, "老存档天数应保留：%d" % Flow.day)
+	_check(not Flow.is_late_night(), "老存档不该被判成熬夜")
+
+
 # ---------------------------------------------------------------- 任务流
 
 ## 讨伐任务：杀满目标 → 结算（赏金 / 天数 / 完成次数）
@@ -743,6 +792,7 @@ func _test_mission_hunt() -> void:
 	Flow.mission_id = "hunt"
 	Flow.mission_cfg = Data.missions["hunt"].duplicate(true)
 	Flow.mission_cfg["target_kills"] = 3
+	var d_before_hunt: int = Flow.day
 	await _reload_battle()
 	_check(game.mission_state == game.MissionState.RUNNING, "讨伐任务未进入进行状态")
 	for i in 3:
@@ -753,7 +803,8 @@ func _test_mission_hunt() -> void:
 	_check(game.mission_kills >= 3, "讨伐计数异常：%d" % game.mission_kills)
 	_check(game.mission_state == game.MissionState.WON, "讨伐任务未完成")
 	_check(Flow.money == 200, "讨伐赏金异常：%d" % Flow.money)
-	_check(Flow.day == 2, "任务完成未过天数：%d" % Flow.day)
+	## v0.11 起时间由时钟负责，任务完成**不再凭空 +1 天**
+	_check(Flow.day == d_before_hunt, "任务完成不该凭空加一天：%d → %d" % [d_before_hunt, Flow.day])
 	_check(Flow.mission_done_count("hunt") == 1, "任务完成次数未记录")
 	_check(int(game.result_rewards.get("xp", 0)) == 60, "讨伐经验奖励异常")
 
