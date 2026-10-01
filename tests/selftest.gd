@@ -799,6 +799,13 @@ func _test_time() -> void:
 	_check(is_equal_approx(Flow.hour, 6.0), "老存档应读成 06:00：%f" % Flow.hour)
 	_check(Flow.day == 7, "老存档天数应保留：%d" % Flow.day)
 	_check(not Flow.is_late_night(), "老存档不该被判成熬夜")
+	## 时钟文本格式（Task 3 用；纯格式回归，不涉及绘制）
+	Flow.day = 3
+	Flow.hour = 9.5
+	var t1: String = Flow.time_text()
+	_check(t1.contains("09:30"), "时钟文本应为 09:30：%s" % t1)
+	Flow.hour = 21.0
+	_check(Flow.time_text().contains("21:00"), "夜晚时钟文本应为 21:00：%s" % Flow.time_text())
 
 
 # ---------------------------------------------------------------- 任务流

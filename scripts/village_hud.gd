@@ -46,7 +46,9 @@ func _draw() -> void:
 	## 忍术装配入口单独占一行：避免玩家以为它藏在任务看板里
 	draw_string(font, Vector2(24.0, 136.0), Data.s("village.loadout_key"), HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.82, 0.78, 0.55))
 	## 右上：标题（右对齐必须给 width，否则会溢出屏幕）
-	draw_string(font, Vector2(0.0, 34.0), Data.s("hud.title"), HORIZONTAL_ALIGNMENT_RIGHT, v.x - 24.0, 13, COL_DIM)
+	_draw_clock(font, v)
+	## 时钟占了第一行，标题下移
+	draw_string(font, Vector2(0.0, 58.0), Data.s("hud.title"), HORIZONTAL_ALIGNMENT_RIGHT, v.x - 24.0, 13, COL_DIM)
 	## 中下：交互提示
 	var hint: String = game.current_interact_hint()
 	if hint != "":
@@ -66,3 +68,26 @@ func _draw() -> void:
 	if notice_timer > 0.0:
 		var a: float = clampf(notice_timer / 2.4, 0.0, 1.0)
 		draw_string(font, Vector2(v.x / 2.0 - 80.0, 130.0), notice_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 22, Color(1.0, 0.92, 0.45, 0.35 + 0.65 * a))
+
+
+## 右上角时钟：第 N 天 + 时刻，配一个画出来的太阳 / 月亮
+func _draw_clock(font: Font, v: Vector2) -> void:
+	var right := v.x - 24.0
+	var text := Flow.time_text()
+	var night := Flow.is_night()
+	var col := Color("bcd2f0") if night else Color("f0dfa0")
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+	draw_string(font, Vector2(0.0, 34.0), text, HORIZONTAL_ALIGNMENT_RIGHT, right, 15, col)
+	_draw_time_icon(Vector2(right - w - 16.0, 28.0), 7.0, night)
+
+
+func _draw_time_icon(c: Vector2, r: float, night: bool) -> void:
+	if night:
+		draw_circle(c, r, Color("cfd8ee"))
+		draw_circle(c + Vector2(-r * 0.28, -r * 0.24), r * 0.22, Color("9fabc6"))
+		draw_circle(c + Vector2(r * 0.3, r * 0.26), r * 0.16, Color("9fabc6"))
+	else:
+		for i in 8:
+			var a := TAU * float(i) / 8.0
+			draw_line(c + Vector2.from_angle(a) * r * 0.95, c + Vector2.from_angle(a) * r * 1.45, Color("f2d24a"), 2.0)
+		draw_circle(c, r * 0.62, Color("f2d24a"))

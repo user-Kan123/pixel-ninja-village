@@ -50,6 +50,7 @@ func _draw() -> void:
 		return
 	var font := Data.font()
 	_draw_bars(font)
+	_draw_clock(font)
 	_draw_jutsu_slots(font)
 	_draw_counters(font)
 	_draw_state_hints(font)
@@ -174,8 +175,9 @@ func _draw_counters(font: Font) -> void:
 	var size_v := get_viewport_rect().size
 	## draw_string 只在 width > 0 时才应用 alignment：传 -1 会让 RIGHT 退化成左对齐，
 	## 文本从 size_v.x - 24 起往右画、直接溢出屏幕。所以右对齐一律用 (0, y) + width = 右边界。
-	draw_string(font, Vector2(0.0, 34.0), Data.s("hud.kills") + "  %d" % game.kill_count, HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 15, COL_TEXT)
-	draw_string(font, Vector2(0.0, 56.0), "%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("hud.day") % Flow.day], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 13, Color("e0c447"))
+	## 时钟占了右上角第一行（y=34），这里整体下移一格
+	draw_string(font, Vector2(0.0, 58.0), Data.s("hud.kills") + "  %d" % game.kill_count, HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 15, COL_TEXT)
+	draw_string(font, Vector2(0.0, 80.0), "%s %d 两 · %s" % [Data.s("hud.money"), Flow.money, Data.s("hud.day") % Flow.day], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 13, Color("e0c447"))
 	draw_string(font, Vector2(size_v.x / 2.0 - 130.0, 34.0), Data.s("hud.title"), HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COL_DIM)
 	## 任务目标
 	var obj: String = game.objective_text()
@@ -183,10 +185,36 @@ func _draw_counters(font: Font) -> void:
 		draw_string(font, Vector2(size_v.x / 2.0 - 110.0, 58.0), Data.s("hud.objective") + "：" + obj, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color(0.95, 0.85, 0.45))
 	if player.buff_timer > 0.0 and not player.buff_id.is_empty():
 		var cfg: Dictionary = Data.jutsu.get(player.buff_id, {})
-		draw_string(font, Vector2(0.0, 80.0), "%s %0.1fs" % [Data.s(String(cfg.get("name_key", player.buff_id))), player.buff_timer], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 13, Color(0.6, 0.9, 1.0))
+		draw_string(font, Vector2(0.0, 102.0), "%s %0.1fs" % [Data.s(String(cfg.get("name_key", player.buff_id))), player.buff_timer], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 13, Color(0.6, 0.9, 1.0))
 	if player.combo_count >= 2:
 		var t: float = clampf(player.combo_timer / 1.2, 0.0, 1.0)
 		draw_string(font, Vector2(0.0, 112.0), "%s x %d" % [Data.s("hud.combo"), player.combo_count], HORIZONTAL_ALIGNMENT_RIGHT, size_v.x - 24.0, 26, Color(1.0, 0.85, 0.3, 0.4 + 0.6 * t))
+
+
+## 右上角时钟：第 N 天 + 时刻，配一个画出来的太阳 / 月亮（不依赖字体符号）
+func _draw_clock(font: Font) -> void:
+	var size_v := get_viewport_rect().size
+	var right := size_v.x - 24.0
+	var text := Flow.time_text()
+	var night := Flow.is_night()
+	var col := Color("bcd2f0") if night else Color("f0dfa0")
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x
+	draw_string(font, Vector2(0.0, 34.0), text, HORIZONTAL_ALIGNMENT_RIGHT, right, 15, col)
+	_draw_time_icon(Vector2(right - w - 16.0, 28.0), 7.0, night)
+
+
+func _draw_time_icon(c: Vector2, r: float, night: bool) -> void:
+	if night:
+		## 满月 + 两个环形山
+		draw_circle(c, r, Color("cfd8ee"))
+		draw_circle(c + Vector2(-r * 0.28, -r * 0.24), r * 0.22, Color("9fabc6"))
+		draw_circle(c + Vector2(r * 0.3, r * 0.26), r * 0.16, Color("9fabc6"))
+	else:
+		## 太阳 + 八道光芒
+		for i in 8:
+			var a := TAU * float(i) / 8.0
+			draw_line(c + Vector2.from_angle(a) * r * 0.95, c + Vector2.from_angle(a) * r * 1.45, Color("f2d24a"), 2.0)
+		draw_circle(c, r * 0.62, Color("f2d24a"))
 
 
 func _draw_state_hints(font: Font) -> void:
