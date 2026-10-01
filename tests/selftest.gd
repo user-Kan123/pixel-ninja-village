@@ -60,6 +60,7 @@ func _ready() -> void:
 	await _test_passives()
 	await _test_pickup()
 	await _test_stamina()
+	await _test_late_night_stamina()
 	await _test_wall_gnaw()
 	await _test_clone_combat()
 	await _test_enemy_attacks()
@@ -737,6 +738,28 @@ func _test_flow_save() -> void:
 	_check(Flow.sid_of_slot(0) == tsid, "武器槽指向的背包格编号没存回来：%d vs %d" % [Flow.sid_of_slot(0), tsid])
 	_reset_flow()
 
+
+
+## 熬夜（00:00–06:00）：体力消耗 ×1.5、站立回复降到 2/秒，但仍然回复（不会卡死）
+func _test_late_night_stamina() -> void:
+	player.exhausted = false
+	Flow.hour = 12.0
+	player.stamina = 100.0
+	player._spend_stamina(10.0)
+	_check(is_equal_approx(player.stamina, 90.0), "白天体力消耗不对：%f" % player.stamina)
+	Flow.hour = 1.0
+	player.stamina = 100.0
+	player._spend_stamina(10.0)
+	_check(is_equal_approx(player.stamina, 85.0), "熬夜消耗应为 1.5 倍：%f" % player.stamina)
+	Flow.hour = 1.0
+	player.stamina = 10.0
+	player._tick_stamina(1.0, false, true)
+	_check(is_equal_approx(player.stamina, 12.0), "熬夜站立回复应为 2/秒：%f" % player.stamina)
+	Flow.hour = 12.0
+	player.stamina = 10.0
+	player._tick_stamina(1.0, false, true)
+	_check(is_equal_approx(player.stamina, 18.0), "白天站立回复应为 8/秒：%f" % player.stamina)
+	Flow.hour = 6.0
 
 
 ## 夜幕：压暗强度随时辰变化（黄昏/黎明渐变，正午为 0）

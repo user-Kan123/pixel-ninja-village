@@ -31,6 +31,9 @@ const STAMINA_MELEE_HEAVY := 16.0    ## 第三段重击
 const STAMINA_THROW_COST := 4.0      ## 远程投掷
 const STAMINA_JUTSU_RATIO := 0.5     ## 忍术体力消耗 = 查克拉消耗 × 该比例
 const EXHAUST_RECOVER := 25.0        ## 力竭后体力恢复到该值自动解除（滞回，防反复横跳）
+## 熬夜（00:00–06:00，见 Flow.is_late_night）：体力消耗加快、站立回复变慢
+const LATE_NIGHT_DRAIN_MULT := 1.5
+const LATE_NIGHT_IDLE_REGEN := 2.0
 ## 武器槽：主手 + 副手，Q 切换。空字符串 = 该槽没装忍具。
 const WEAPON_SLOT_COUNT := 2
 ## 近战每命中一次扣的耐久
@@ -620,6 +623,9 @@ func stamina_chakra_regen_mult() -> float:
 func _spend_stamina(amount: float) -> void:
 	if amount <= 0.0 or exhausted:
 		return
+	## 熬夜：同样的动作更费体力
+	if Flow.is_late_night():
+		amount *= LATE_NIGHT_DRAIN_MULT
 	stamina = maxf(stamina - amount, 0.0)
 	if stamina <= 0.0:
 		exhausted = true
@@ -637,7 +643,9 @@ func _tick_stamina(delta: float, moving: bool, idle: bool) -> void:
 	elif moving:
 		_spend_stamina(STAMINA_MOVE_DRAIN * delta)
 	elif idle:
-		stamina = minf(stamina + STAMINA_REGEN_IDLE * delta, max_stamina)
+		## 熬夜时回得慢，但仍然回复——不把玩家卡死，只是逼他回家睡觉
+		var regen := LATE_NIGHT_IDLE_REGEN if Flow.is_late_night() else STAMINA_REGEN_IDLE
+		stamina = minf(stamina + regen * delta, max_stamina)
 	## 攻击/施法期间：不耗也不回（消耗已在动作发生时结算）
 
 
