@@ -70,6 +70,7 @@ func _ready() -> void:
 	_test_mouse_move()
 	_test_flow_save()
 	await _test_time()
+	await _test_night_fx()
 	await _test_mission_hunt()
 	await _test_mission_collect()
 	await _test_mission_survive()
@@ -736,6 +737,17 @@ func _test_flow_save() -> void:
 	_check(Flow.sid_of_slot(0) == tsid, "武器槽指向的背包格编号没存回来：%d vs %d" % [Flow.sid_of_slot(0), tsid])
 	_reset_flow()
 
+
+
+## 夜幕：压暗强度随时辰变化（黄昏/黎明渐变，正午为 0）
+func _test_night_fx() -> void:
+	_check(is_equal_approx(NightFx.dark_alpha(12.0), 0.0), "正午不该压暗：%f" % NightFx.dark_alpha(12.0))
+	_check(NightFx.dark_alpha(21.0) > 0.3, "深夜应该明显压暗：%f" % NightFx.dark_alpha(21.0))
+	var dusk: float = NightFx.dark_alpha(18.25)
+	_check(dusk > 0.0 and dusk < NightFx.NIGHT_DARK_MAX, "18:15 应是渐变中间态：%f" % dusk)
+	_check(is_equal_approx(NightFx.dark_alpha(18.0), 0.0), "18:00 整应还没变暗：%f" % NightFx.dark_alpha(18.0))
+	_check(is_equal_approx(NightFx.dark_alpha(5.0), NightFx.NIGHT_DARK_MAX), "05:00 应是全暗：%f" % NightFx.dark_alpha(5.0))
+	_check(NightFx.dark_alpha(5.75) < NightFx.NIGHT_DARK_MAX, "05:45 应开始变亮：%f" % NightFx.dark_alpha(5.75))
 
 
 ## 时间系统：场景里时间要自己往前走，界面打开时停

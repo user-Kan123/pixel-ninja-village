@@ -33,6 +33,7 @@ func _draw() -> void:
 		return
 	var font := Data.font()
 	var v := get_viewport_rect().size
+	_draw_night(v)
 	## 左上：等级 / 天数 / 赏金
 	draw_string(font, Vector2(24.0, 34.0), "Lv.%d %s" % [player.level, Data.s(player.rank_key())], HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COL_TEXT)
 	draw_string(font, Vector2(24.0, 60.0), Data.s("hud.day") % Flow.day, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COL_DIM)
@@ -71,6 +72,14 @@ func _draw() -> void:
 
 
 ## 右上角时钟：第 N 天 + 时刻，配一个画出来的太阳 / 月亮
+## 夜幕：铺在世界之上、HUD 元素之下
+func _draw_night(v: Vector2) -> void:
+	var cam := get_viewport().get_camera_2d()
+	if cam == null:
+		return
+	NightFx.draw_overlay(self, cam.get_canvas_transform() * player.global_position, v)
+
+
 func _draw_clock(font: Font, v: Vector2) -> void:
 	var right := v.x - 24.0
 	var text := Flow.time_text()

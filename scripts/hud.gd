@@ -49,6 +49,7 @@ func _draw() -> void:
 	if player == null:
 		return
 	var font := Data.font()
+	_draw_night()
 	_draw_bars(font)
 	_draw_clock(font)
 	_draw_jutsu_slots(font)
@@ -62,6 +63,14 @@ func _draw() -> void:
 	_draw_mission_result(font)
 	if player.dead and not Flow.in_mission():
 		_draw_death(font)
+
+
+## 夜幕：铺在世界之上、HUD 元素之下（所以 HUD 自己不会被压暗）
+func _draw_night() -> void:
+	var cam := get_viewport().get_camera_2d()
+	if cam == null:
+		return
+	NightFx.draw_overlay(self, cam.get_canvas_transform() * player.global_position, get_viewport_rect().size)
 
 
 func _draw_bars(font: Font) -> void:

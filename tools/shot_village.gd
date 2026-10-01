@@ -66,6 +66,13 @@ func _ready() -> void:
 	await get_tree().create_timer(0.3).timeout
 	await _shot("village_training.png")
 
+	## 6) 夜景（同一机位，验证夜幕与玩家周围微光）
+	Flow.hour = 21.0
+	cam.zoom = Vector2(0.42, 0.42)
+	p.global_position = village.center
+	await get_tree().create_timer(0.3).timeout
+	await _shot("village_night.png")
+
 	get_tree().quit()
 
 
