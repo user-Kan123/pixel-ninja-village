@@ -74,6 +74,7 @@ func _ready() -> void:
 	await _test_night_fx()
 	await _test_mission_hunt()
 	await _test_night_spawn()
+	await _test_time_frozen()
 	await _test_mission_collect()
 	await _test_mission_survive()
 	await _test_wild_and_pending()
@@ -83,6 +84,18 @@ func _ready() -> void:
 	await _test_time_scene()
 	await _test_time_gates()
 	_finish()
+
+
+## 结算画面与死亡时时间必须冻结（规格 §5 把这两种也列进了"时间不走"的场合）
+func _test_time_frozen() -> void:
+	Flow.hour = 12.0
+	game.mission_state = game.MissionState.WON
+	await _frames(20)
+	_check(is_equal_approx(Flow.hour, 12.0), "结算画面时时间仍在走：%f" % Flow.hour)
+	game.mission_state = game.MissionState.NONE
+	Flow.hour = 12.0
+	await _frames(20)
+	_check(Flow.hour > 12.0, "回到正常状态后时间应恢复流逝：%f" % Flow.hour)
 
 
 ## 夜晚的玩法后果：野外刷怪更密、精英权重更高（战场场景里跑）

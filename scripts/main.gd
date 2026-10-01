@@ -9,7 +9,8 @@ extends Node2D
 ##   survive  波次：清完一波刷下一波，清完最后一波完成
 ##   collect  收集：捡满情报卷轴完成，敌人周期性骚扰
 ##
-## 完成 → 结算（赏金 + 经验 + 过一天）→ 按 E 回村；失败 → 按 E 回村（不删档）。
+## 完成 → 结算（赏金 + 经验；**时间不再由任务推进**，见 v0.11 时间系统）→ 按 E 回村；
+## 失败 → 按 E 回村（不删档）。结算与死亡画面期间时钟冻结。
 
 var arena_size: Vector2 = Vector2(1840.0, 1220.0)
 ## 障碍：{ "rect": Rect2, "kind": "crate" / "rock" / "tree" }
@@ -159,8 +160,10 @@ func _show_start_banner() -> void:
 
 
 func _process(delta: float) -> void:
-	## 时间在任何情况下都要走（结算画面之后也走），所以放在提前 return 之前
-	Flow.advance(delta)
+	## 时间：结算画面（WON / LOST）与死亡后冻结，其余情况照常流逝（规格 §5）
+	if mission_state != MissionState.WON and mission_state != MissionState.LOST \
+			and player != null and not player.dead:
+		Flow.advance(delta)
 	if mission_state != MissionState.RUNNING:
 		return
 	var t := String(Flow.mission_cfg.get("type", ""))
